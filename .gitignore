@@ -37,3 +37,4 @@ models/exports/*
 .idea/
 .vscode/
 subject/
+AGENTS.md
