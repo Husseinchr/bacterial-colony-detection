@@ -22,8 +22,9 @@ def parse_args() -> argparse.Namespace:
         "--max-boxes",
         type=int,
         default=250,
-        help="Maximum boxes to draw per image to keep dense plates readable.",
+        help="Maximum boxes to draw per image to keep dense plates readable. Use 0 to draw all boxes.",
     )
+    parser.add_argument("--line-thickness", type=int, default=2, help="Bounding box line thickness.")
     return parser.parse_args()
 
 
@@ -41,19 +42,20 @@ def choose_samples(split_df: pd.DataFrame, num_samples: int, seed: int) -> list[
     return image_names[: min(num_samples, len(image_names))]
 
 
-def draw_boxes(image, boxes: pd.DataFrame, max_boxes: int):
+def draw_boxes(image, boxes: pd.DataFrame, max_boxes: int, line_thickness: int):
     output = image.copy()
-    draw_df = boxes.head(max_boxes)
+    draw_all = max_boxes <= 0
+    draw_df = boxes if draw_all else boxes.head(max_boxes)
 
     for _, row in draw_df.iterrows():
         x1 = int(row["bbox_x"])
         y1 = int(row["bbox_y"])
         x2 = int(row["bbox_x"] + row["bbox_width"])
         y2 = int(row["bbox_y"] + row["bbox_height"])
-        cv2.rectangle(output, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.rectangle(output, (x1, y1), (x2, y2), (0, 255, 0), line_thickness)
 
-    text = f"{len(boxes)} boxes"
-    if len(boxes) > max_boxes:
+    text = f"{len(boxes)} boxes (all shown)"
+    if not draw_all and len(boxes) > max_boxes:
         text += f" (showing {max_boxes})"
     cv2.putText(output, text, (30, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.8, (0, 0, 255), 4)
     return output
@@ -83,7 +85,7 @@ def main() -> None:
             raise FileNotFoundError(f"Could not read image: {image_path}")
 
         boxes = annotations[annotations["image_name"] == image_name].copy()
-        rendered = draw_boxes(image, boxes, args.max_boxes)
+        rendered = draw_boxes(image, boxes, args.max_boxes, args.line_thickness)
         rendered = resize_for_review(rendered)
 
         output_path = args.output_dir / f"{Path(image_name).stem}_boxes.jpg"
@@ -99,4 +101,3 @@ if __name__ == "__main__":
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         raise
-
