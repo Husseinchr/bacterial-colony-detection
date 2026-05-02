@@ -38,3 +38,4 @@ models/exports/*
 .vscode/
 subject/
 AGENTS.md
+handwritten_notes.md
