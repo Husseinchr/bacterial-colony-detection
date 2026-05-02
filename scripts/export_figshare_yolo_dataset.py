@@ -25,6 +25,12 @@ def parse_args() -> argparse.Namespace:
         default="copy",
         help="Use copy for Google Drive portability. Symlink is faster but less portable.",
     )
+    parser.add_argument(
+        "--single-class",
+        action="store_true",
+        help="Export all colonies as one class named by --single-class-name.",
+    )
+    parser.add_argument("--single-class-name", default="colony")
     return parser.parse_args()
 
 
@@ -64,6 +70,7 @@ def link_or_copy_image(source: Path, destination: Path, mode: str) -> None:
 def yolo_rows_for_image(
     image_annotations: pd.DataFrame,
     class_to_id: dict[str, int],
+    single_class: bool,
 ) -> list[str]:
     rows = []
     for _, row in image_annotations.iterrows():
@@ -81,7 +88,7 @@ def yolo_rows_for_image(
         norm_height = height / image_height
 
         values = [
-            class_to_id[row["label_name"]],
+            0 if single_class else class_to_id[row["label_name"]],
             _clip01(x_center),
             _clip01(y_center),
             _clip01(norm_width),
@@ -99,6 +106,7 @@ def export_split(
     annotations: pd.DataFrame,
     class_to_id: dict[str, int],
     image_mode: str,
+    single_class: bool,
 ) -> tuple[int, int]:
     image_count = 0
     box_count = 0
@@ -112,7 +120,7 @@ def export_split(
         link_or_copy_image(source_image, destination_image, image_mode)
 
         image_annotations = annotations[annotations["image_name"] == image_name]
-        label_rows = yolo_rows_for_image(image_annotations, class_to_id)
+        label_rows = yolo_rows_for_image(image_annotations, class_to_id, single_class)
 
         label_path = output_dir / "labels" / split_name / f"{Path(image_name).stem}.txt"
         label_path.write_text("\n".join(label_rows) + "\n", encoding="utf-8")
@@ -153,7 +161,7 @@ def main() -> None:
         raise FileNotFoundError(f"Missing annotation file: {annotation_path}")
 
     annotations = pd.read_csv(annotation_path)
-    class_names = sorted_species(annotations["label_name"])
+    class_names = [args.single_class_name] if args.single_class else sorted_species(annotations["label_name"])
     class_to_id = {name: idx for idx, name in enumerate(class_names)}
 
     prepare_dirs(output_dir)
@@ -168,6 +176,7 @@ def main() -> None:
             annotations,
             class_to_id,
             args.image_mode,
+            args.single_class,
         )
         summary[split] = {"images": image_count, "boxes": box_count}
 
@@ -186,4 +195,3 @@ if __name__ == "__main__":
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         raise
-
