@@ -19,10 +19,16 @@ def parse_args() -> argparse.Namespace:
         help="Directory containing YOLO prediction TXT files from predict save_txt=True.",
     )
     parser.add_argument("--output-csv", required=True, type=Path, help="Path for per-image count error CSV.")
+    parser.add_argument(
+        "--conf-threshold",
+        type=float,
+        default=0.0,
+        help="Only count detections with confidence >= this value. Requires predictions saved with save_conf=True.",
+    )
     return parser.parse_args()
 
 
-def count_prediction_file(path: Path) -> int:
+def count_prediction_file(path: Path, conf_threshold: float = 0.0) -> int:
     """Count YOLO detections in one prediction label file."""
 
     if not path.exists():
@@ -30,7 +36,14 @@ def count_prediction_file(path: Path) -> int:
     text = path.read_text(encoding="utf-8").strip()
     if not text:
         return 0
-    return len(text.splitlines())
+
+    count = 0
+    for line in text.splitlines():
+        parts = line.split()
+        confidence = float(parts[5]) if len(parts) >= 6 else 1.0
+        if confidence >= conf_threshold:
+            count += 1
+    return count
 
 
 def compute_metrics(results: pd.DataFrame) -> dict[str, float]:
@@ -63,7 +76,7 @@ def main() -> None:
         image_name = row["image_name"]
         label_path = args.prediction_label_dir / f"{Path(image_name).stem}.txt"
         true_count = int(row["colony_count"])
-        pred_count = count_prediction_file(label_path)
+        pred_count = count_prediction_file(label_path, args.conf_threshold)
         rows.append(
             {
                 "image_name": image_name,
@@ -80,6 +93,7 @@ def main() -> None:
 
     metrics = compute_metrics(results)
     print("Count metrics:")
+    print(f"  conf_threshold: {args.conf_threshold:.3f}")
     for key, value in metrics.items():
         print(f"  {key}: {value:.3f}")
     print(f"\nSaved per-image count errors to: {args.output_csv}")
@@ -91,4 +105,3 @@ if __name__ == "__main__":
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         raise
-
