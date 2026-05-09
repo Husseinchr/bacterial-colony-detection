@@ -6,7 +6,7 @@ from typing import Any
 
 import pandas as pd
 
-from src.classical import run_classical_detect_count
+from src.classical.detect_count import run_classical_detect_count
 from src.evaluation import count_metrics
 from src.preprocessing import load_image
 
