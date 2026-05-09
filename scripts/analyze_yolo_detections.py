@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def draw_detection_overlay(image, detections):
+def draw_detection_overlay(image, detections, conf_threshold: float):
     output = image.copy()
     for _, row in detections.iterrows():
         x1 = int(row["x1"])
@@ -43,6 +43,9 @@ def draw_detection_overlay(image, detections):
         cy = int(round(row["centroid_y"]))
         cv2.rectangle(output, (x1, y1), (x2, y2), (0, 0, 255), 2)
         cv2.circle(output, (cx, cy), 3, (0, 255, 255), -1)
+    label = f"Detections: {len(detections)} | conf >= {conf_threshold:.2f}"
+    cv2.putText(output, label, (30, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (255, 255, 255), 6)
+    cv2.putText(output, label, (30, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 0, 255), 3)
     return output
 
 
@@ -76,6 +79,8 @@ def save_density_heatmap(path: Path, density_grid, rows: int, cols: int) -> None
     ax.set_title("Spatial colony density")
     ax.set_xlabel("Grid column")
     ax.set_ylabel("Grid row")
+    ax.set_xticks(np.arange(cols))
+    ax.set_yticks(np.arange(rows))
     for row_idx in range(rows):
         for col_idx in range(cols):
             ax.text(col_idx, row_idx, int(matrix[row_idx, col_idx]), ha="center", va="center", color="white")
@@ -106,7 +111,7 @@ def main() -> None:
     with (args.output_dir / "summary.json").open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
-    overlay = draw_detection_overlay(image, detections)
+    overlay = draw_detection_overlay(image, detections, args.conf_threshold)
     overlay = resize_for_review(overlay, args.max_side)
     ok = cv2.imwrite(str(args.output_dir / "overlay.png"), overlay)
     if not ok:
