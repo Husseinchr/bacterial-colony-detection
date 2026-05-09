@@ -1,6 +1,6 @@
 # Automated Bacterial Colony Detection, Counting, and Morphology Analysis
 
-This repository contains a computer vision project for detecting, counting, and analyzing bacterial colonies in petri dish images. It includes a deterministic OpenCV baseline, a YOLO object-detection/counting workflow, and a post-detection analysis stage for morphology approximations, size distributions, and spatial density summaries.
+This repository contains a computer vision project for detecting, counting, and analyzing bacterial colonies in petri dish images. It includes a deterministic OpenCV segmentation baseline, a YOLO object-detection/counting workflow, post-detection morphology and density analysis, and growth-level classification.
 
 The project is developed by Hussein Chreif and Mostafa Younes for a university computer vision project.
 
@@ -17,6 +17,11 @@ Current best clean held-out test result:
 The 1536 image-size single-class YOLOv8n model is now the best result by MAE and RMSE. The 1024 model still has lower MAPE, so both should be reported with a clear metric tradeoff.
 
 The complete system output is not limited to a count. YOLO detections can be converted into per-colony geometry features, spatial density grids, size-distribution plots, overlays, and JSON/CSV summaries with `scripts/analyze_yolo_detections.py`.
+
+The unified full pipeline is available in `scripts/run_full_pipeline.py`. It supports:
+
+- `--mode classical`: preprocessing, classical segmentation, connected components, mask-derived features, density, growth level, and visual outputs.
+- `--mode yolo`: YOLO detection or existing YOLO labels, count, class/species distribution when class names are supplied, detection-derived morphology, density, growth level, and visual outputs.
 
 ## Recommended Next Step
 
@@ -128,6 +133,85 @@ Expected outputs:
 - `features.csv`
 - `debug_panel.png`
 - `summary.json`
+
+## Full Pipeline
+
+Run the complete system in YOLO mode using existing prediction labels:
+
+```bash
+python scripts/run_full_pipeline.py \
+  --mode yolo \
+  --image /content/drive/MyDrive/bacterial_colony_detection/data/raw/figshare_bacterial_colony_detection/sp09_img12.jpg \
+  --prediction-label /content/drive/MyDrive/bacterial_colony_detection/outputs/yolo_predictions/figshare_yolov8n_single_class_img1536_test_conf001_maxdet1000-2/labels/sp09_img12.txt \
+  --output-dir /content/drive/MyDrive/bacterial_colony_detection/outputs/full_pipeline/sp09_img12_yolo \
+  --conf-threshold 0.32
+```
+
+Run the complete system in YOLO mode directly from trained weights:
+
+```bash
+python scripts/run_full_pipeline.py \
+  --mode yolo \
+  --image /content/drive/MyDrive/bacterial_colony_detection/data/raw/figshare_bacterial_colony_detection/sp09_img12.jpg \
+  --weights /content/drive/MyDrive/bacterial_colony_detection/outputs/yolo_training/figshare_yolov8n_single_class_img1536/weights/best.pt \
+  --output-dir /content/drive/MyDrive/bacterial_colony_detection/outputs/full_pipeline/sp09_img12_yolo_from_weights \
+  --conf-threshold 0.32 \
+  --predict-conf 0.01 \
+  --imgsz 1536 \
+  --max-det 1000
+```
+
+Run the complete system with the 24-class species model:
+
+```bash
+python scripts/run_full_pipeline.py \
+  --mode yolo \
+  --image /content/drive/MyDrive/bacterial_colony_detection/data/raw/figshare_bacterial_colony_detection/sp09_img12.jpg \
+  --weights /content/drive/MyDrive/bacterial_colony_detection/outputs/yolo_training/figshare_yolov8n_baseline/weights/best.pt \
+  --class-names /content/drive/MyDrive/bacterial_colony_detection/data/processed/figshare_yolo/data.yaml \
+  --output-dir /content/drive/MyDrive/bacterial_colony_detection/outputs/full_pipeline/sp09_img12_yolo_24class \
+  --conf-threshold 0.10 \
+  --predict-conf 0.01 \
+  --imgsz 1024 \
+  --max-det 1000
+```
+
+Run the complete system in classical mode:
+
+```bash
+python scripts/run_full_pipeline.py \
+  --mode classical \
+  --image /content/drive/MyDrive/bacterial_colony_detection/data/raw/figshare_bacterial_colony_detection/sp09_img12.jpg \
+  --output-dir /content/drive/MyDrive/bacterial_colony_detection/outputs/full_pipeline/sp09_img12_classical \
+  --config configs/default.yaml
+```
+
+YOLO-mode outputs:
+
+- `detections.csv`
+- `class_distribution.csv`
+- `density_grid.csv`
+- `summary.json`
+- `overlay.png`
+- `size_distribution.png`
+- `density_heatmap.png`
+- `yolo_prediction.txt`, only when `--weights` is used
+
+Classical-mode outputs:
+
+- `features.csv`
+- `density_grid.csv`
+- `summary.json`
+- `mask.png`
+- `labels.png`
+- `overlay.png`
+- `debug_panel.png`
+- `size_distribution.png`
+- `density_heatmap.png`
+
+The growth level in `summary.json` is a rule-based low/moderate/high label derived from colony count and density. It is growth-intensity classification, not bacterial species classification.
+
+Species/type classification is supported when the 24-class YOLO model is used with `--class-names`. The single-class model remains the best counting model, while the 24-class model provides species labels with weaker detection/counting performance.
 
 ## Figshare Workflow
 
@@ -273,6 +357,8 @@ These features are detection-derived morphology approximations. They support qua
 | single-class YOLOv8n, 1536 | test count, fixed `conf=0.32` | MAE 10.603, RMSE 24.895, MAPE 11.787% |
 
 The 1536 model improves test MAE and RMSE over 1024, but 1024 has better MAPE. This suggests 1536 reduces larger absolute errors on dense plates while making proportionally larger mistakes on some low-count plates.
+
+The 24-class model is the species/type classifier. It is retained as a secondary result because it predicts species labels, but it is not the best model for the core counting objective.
 
 For a report-ready interpretation, see `docs/final_results_summary.md`.
 

@@ -4,7 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from src.analysis import build_density_grid, read_yolo_detections, summarize_detections
+from src.analysis import (
+    build_density_grid,
+    load_class_names,
+    read_yolo_detections,
+    summarize_class_distribution,
+    summarize_detections,
+)
 
 
 def test_read_yolo_detections_filters_and_converts_boxes(tmp_path: Path) -> None:
@@ -20,9 +26,16 @@ def test_read_yolo_detections_filters_and_converts_boxes(tmp_path: Path) -> None
         encoding="utf-8",
     )
 
-    detections = read_yolo_detections(label_path, image_width=100, image_height=80, conf_threshold=0.5)
+    detections = read_yolo_detections(
+        label_path,
+        image_width=100,
+        image_height=80,
+        conf_threshold=0.5,
+        class_names=["colony"],
+    )
 
     assert len(detections) == 2
+    assert detections.iloc[0]["class_name"] == "colony"
     assert detections.iloc[0]["x1"] == 40
     assert detections.iloc[0]["y1"] == 36
     assert detections.iloc[0]["x2"] == 60
@@ -74,12 +87,48 @@ def test_summarize_detections_reports_count_and_density() -> None:
     assert summary["density_per_100k_pixels"] == pytest.approx(12.5)
     assert summary["mean_bbox_area"] == 160.0
     assert summary["mean_confidence"] == 0.9
+    assert summary["predicted_classes"] == 1
+    assert summary["predominant_class"] == "0"
+    assert summary["predominant_class_count"] == 1
 
 
-def read_yolo_detections_from_text(text: str, image_width: int, image_height: int):
+def test_load_class_names_supports_text_and_yaml(tmp_path: Path) -> None:
+    text_path = tmp_path / "classes.txt"
+    text_path.write_text("sp01\nsp02\n", encoding="utf-8")
+    yaml_path = tmp_path / "data.yaml"
+    yaml_path.write_text("names:\n  0: sp01\n  1: sp02\n", encoding="utf-8")
+
+    assert load_class_names(text_path) == ["sp01", "sp02"]
+    assert load_class_names(yaml_path) == ["sp01", "sp02"]
+
+
+def test_summarize_class_distribution_counts_species() -> None:
+    detections = read_yolo_detections_from_text(
+        "0 0.250000 0.250000 0.100000 0.100000 0.90\n"
+        "1 0.750000 0.750000 0.100000 0.100000 0.80\n"
+        "1 0.650000 0.750000 0.100000 0.100000 0.70\n",
+        image_width=100,
+        image_height=100,
+        class_names=["sp01", "sp02"],
+    )
+
+    distribution = summarize_class_distribution(detections)
+
+    assert distribution.iloc[0]["class_name"] == "sp02"
+    assert distribution.iloc[0]["count"] == 2
+    assert distribution.iloc[1]["class_name"] == "sp01"
+    assert distribution.iloc[1]["count"] == 1
+
+
+def read_yolo_detections_from_text(
+    text: str,
+    image_width: int,
+    image_height: int,
+    class_names: list[str] | None = None,
+):
     path = Path("/tmp/test_detection_analysis_labels.txt")
     path.write_text(text, encoding="utf-8")
     try:
-        return read_yolo_detections(path, image_width=image_width, image_height=image_height)
+        return read_yolo_detections(path, image_width=image_width, image_height=image_height, class_names=class_names)
     finally:
         path.unlink(missing_ok=True)

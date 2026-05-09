@@ -17,7 +17,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.analysis import build_density_grid, read_yolo_detections, summarize_detections
+from src.analysis import (
+    build_density_grid,
+    load_class_names,
+    read_yolo_detections,
+    summarize_class_distribution,
+    summarize_detections,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -29,6 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--grid-rows", type=int, default=4)
     parser.add_argument("--grid-cols", type=int, default=4)
     parser.add_argument("--max-side", type=int, default=1800)
+    parser.add_argument("--class-names", type=Path, default=None, help="Optional classes.txt or YOLO data.yaml.")
     return parser.parse_args()
 
 
@@ -97,8 +104,10 @@ def main() -> None:
         raise FileNotFoundError(f"Could not read image: {args.image}")
 
     image_height, image_width = image.shape[:2]
-    detections = read_yolo_detections(args.prediction_label, image_width, image_height, args.conf_threshold)
+    class_names = load_class_names(args.class_names)
+    detections = read_yolo_detections(args.prediction_label, image_width, image_height, args.conf_threshold, class_names)
     density_grid = build_density_grid(detections, image_width, image_height, args.grid_rows, args.grid_cols)
+    class_distribution = summarize_class_distribution(detections)
     summary = summarize_detections(detections, image_width, image_height)
     summary["conf_threshold"] = float(args.conf_threshold)
     summary["prediction_label"] = str(args.prediction_label)
@@ -107,6 +116,7 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     detections.to_csv(args.output_dir / "detections.csv", index=False)
     density_grid.to_csv(args.output_dir / "density_grid.csv", index=False)
+    class_distribution.to_csv(args.output_dir / "class_distribution.csv", index=False)
 
     with (args.output_dir / "summary.json").open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)

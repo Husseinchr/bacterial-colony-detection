@@ -4,11 +4,13 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import yaml
 
 
 DETECTION_COLUMNS = [
     "detection_id",
     "class_id",
+    "class_name",
     "confidence",
     "x_center_norm",
     "y_center_norm",
@@ -33,6 +35,7 @@ def read_yolo_detections(
     image_width: int,
     image_height: int,
     conf_threshold: float = 0.0,
+    class_names: list[str] | None = None,
 ) -> pd.DataFrame:
     label_path = Path(label_path)
     if not label_path.exists():
@@ -49,6 +52,7 @@ def read_yolo_detections(
             continue
 
         class_id = int(float(parts[0]))
+        class_name = class_names[class_id] if class_names is not None and 0 <= class_id < len(class_names) else str(class_id)
         x_center_norm = float(parts[1])
         y_center_norm = float(parts[2])
         width_norm = float(parts[3])
@@ -83,6 +87,7 @@ def read_yolo_detections(
             {
                 "detection_id": len(rows) + 1,
                 "class_id": class_id,
+                "class_name": class_name,
                 "confidence": confidence,
                 "x_center_norm": x_center_norm,
                 "y_center_norm": y_center_norm,
@@ -103,6 +108,27 @@ def read_yolo_detections(
         )
 
     return pd.DataFrame(rows, columns=DETECTION_COLUMNS)
+
+
+def load_class_names(path: str | Path | None) -> list[str] | None:
+    if path is None:
+        return None
+
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Missing class-name file: {path}")
+
+    if path.suffix.lower() in {".yaml", ".yml"}:
+        with path.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        names = data.get("names")
+        if isinstance(names, dict):
+            return [names[key] for key in sorted(names)]
+        if isinstance(names, list):
+            return [str(name) for name in names]
+        raise ValueError(f"Could not read names from YAML file: {path}")
+
+    return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def build_density_grid(
@@ -185,8 +211,12 @@ def summarize_detections(detections: pd.DataFrame, image_width: int, image_heigh
             "centroid_std_x": 0.0,
             "centroid_std_y": 0.0,
             "mean_confidence": 0.0,
+            "predicted_classes": 0,
+            "predominant_class": "",
+            "predominant_class_count": 0,
         }
 
+    class_counts = detections["class_name"].value_counts()
     return {
         "colony_count": count,
         "image_width": int(image_width),
@@ -201,4 +231,20 @@ def summarize_detections(detections: pd.DataFrame, image_width: int, image_heigh
         "centroid_std_x": float(detections["centroid_x"].std(ddof=0)),
         "centroid_std_y": float(detections["centroid_y"].std(ddof=0)),
         "mean_confidence": float(detections["confidence"].mean()),
+        "predicted_classes": int(class_counts.size),
+        "predominant_class": str(class_counts.index[0]),
+        "predominant_class_count": int(class_counts.iloc[0]),
     }
+
+
+def summarize_class_distribution(detections: pd.DataFrame) -> pd.DataFrame:
+    if detections.empty:
+        return pd.DataFrame(columns=["class_id", "class_name", "count", "mean_confidence"])
+
+    summary = (
+        detections.groupby(["class_id", "class_name"], as_index=False)
+        .agg(count=("detection_id", "count"), mean_confidence=("confidence", "mean"))
+        .sort_values(["count", "mean_confidence"], ascending=[False, False])
+        .reset_index(drop=True)
+    )
+    return summary

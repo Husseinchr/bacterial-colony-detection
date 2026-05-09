@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import cv2
+
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -85,4 +89,3 @@ def save_debug_panel(
     fig.tight_layout()
     fig.savefig(path, dpi=150)
     plt.close(fig)
-
