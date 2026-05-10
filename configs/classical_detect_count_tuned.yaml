@@ -1,0 +1,24 @@
+pipeline:
+  threshold_method: otsu
+  split_touching: false
+  save_debug_panel: true
+
+preprocessing:
+  gaussian_kernel_size: 5
+  clahe_clip_limit: 2.0
+  clahe_tile_grid_size: 8
+  background_kernel_size: 51
+
+segmentation:
+  invert_threshold: false
+  adaptive_block_size: 51
+  adaptive_c: 2
+  morph_kernel_size: 5
+  opening_iterations: 2
+  closing_iterations: 1
+  min_area: 200
+  max_area: 20000
+  min_circularity: 0.35
+
+outputs:
+  overlay_alpha: 0.45
