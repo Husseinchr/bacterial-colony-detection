@@ -11,6 +11,28 @@ import pandas as pd
 
 
 CATEGORIES = ("countable", "empty", "uncountable")
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+INVENTORY_COLUMNS = [
+    "sample_id",
+    "category",
+    "image_path",
+    "json_path",
+    "image_name",
+    "json_name",
+    "background",
+    "classes",
+    "primary_class",
+    "class_count",
+    "colonies_number",
+    "label_count",
+    "image_width",
+    "image_height",
+    "image_channels",
+    "image_readable",
+    "has_pair",
+    "detection_eligible",
+    "species_image_eligible",
+]
 
 
 @dataclass(frozen=True)
@@ -50,15 +72,37 @@ def load_agar_annotation(path: Path) -> dict[str, Any]:
 
 def discover_records(dataset_dir: Path, read_images: bool = True) -> pd.DataFrame:
     rows = []
-    data_dir = dataset_dir / "data"
+    data_dir = find_agar_data_dir(dataset_dir)
+    if data_dir is None:
+        return pd.DataFrame(columns=INVENTORY_COLUMNS)
+
     for category in CATEGORIES:
         category_dir = data_dir / category
         if not category_dir.exists():
             continue
-        for image_path in sorted(category_dir.glob("*.png")):
+        image_paths = sorted(
+            path for path in category_dir.iterdir() if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+        )
+        for image_path in image_paths:
             json_path = image_path.with_suffix(".json")
             rows.append(record_from_pair(dataset_dir, category, image_path, json_path, read_images))
-    return pd.DataFrame([record.__dict__ for record in rows])
+    if not rows:
+        return pd.DataFrame(columns=INVENTORY_COLUMNS)
+    return pd.DataFrame([record.__dict__ for record in rows], columns=INVENTORY_COLUMNS)
+
+
+def find_agar_data_dir(dataset_dir: Path) -> Path | None:
+    direct_candidates = [dataset_dir / "data", dataset_dir]
+    for candidate in direct_candidates:
+        if any((candidate / category).is_dir() for category in CATEGORIES):
+            return candidate
+
+    for path in dataset_dir.rglob("*"):
+        if path.is_dir() and path.name in CATEGORIES:
+            parent = path.parent
+            if any((parent / category).is_dir() for category in CATEGORIES):
+                return parent
+    return None
 
 
 def record_from_pair(
@@ -160,7 +204,7 @@ def split_inventory(
     if abs(total - 1.0) > 1e-6:
         raise ValueError(f"Split ratios must sum to 1.0, got {total:.4f}")
     if inventory.empty:
-        return inventory.assign(split=pd.Series(dtype=str))
+        return pd.DataFrame(columns=[*INVENTORY_COLUMNS, "split"])
 
     rng = random.Random(seed)
     rows = []

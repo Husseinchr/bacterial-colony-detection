@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 
 from src.datasets import build_inventory, load_agar_annotation, split_inventory
+from src.datasets.agar import find_agar_data_dir
 
 
 def write_sample(root: Path, category: str, sample_id: int, colonies_number: int, class_name: str, labels: list[dict]) -> None:
@@ -64,3 +65,22 @@ def test_split_inventory_preserves_rows_and_writes_split_column(tmp_path: Path) 
 
     assert len(split_df) == len(inventory)
     assert set(split_df["split"]) == {"train", "val", "test"}
+
+
+def test_find_agar_data_dir_supports_nested_root(tmp_path: Path) -> None:
+    nested = tmp_path / "outer" / "agar_primary"
+    write_sample(nested, "countable", 1, 1, "A", [])
+
+    data_dir = find_agar_data_dir(tmp_path)
+
+    assert data_dir == nested / "data"
+
+
+def test_empty_inventory_has_stable_columns(tmp_path: Path) -> None:
+    inventory, summary = build_inventory(tmp_path)
+    split_df = split_inventory(inventory)
+
+    assert inventory.empty
+    assert summary["total_images"] == 0
+    assert "detection_eligible" in inventory.columns
+    assert "split" in split_df.columns

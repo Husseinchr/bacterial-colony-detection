@@ -27,6 +27,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     inventory, summary = build_inventory(args.dataset_dir, read_images=not args.skip_image_read)
+    if inventory.empty:
+        raise ValueError(
+            f"No AGAR image records found under {args.dataset_dir}. "
+            "Check that the path contains data/countable, data/empty, and data/uncountable."
+        )
     split_df = split_inventory(
         inventory,
         train_ratio=args.train_ratio,
