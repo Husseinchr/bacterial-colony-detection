@@ -48,7 +48,9 @@ data/
 models/             Future checkpoints and exports; large binaries stay out of git
 notebooks/          Exploratory notebooks only
 outputs/            Generated masks, overlays, tables, metrics, and summaries
-scripts/            Runnable command-line entrypoints
+scripts/            Runnable command-line entrypoints grouped by task
+  datasets/         AGAR inspection, splitting, and annotation QA scripts
+  classical/        Classical CV evaluation and tuning scripts
 src/                Reusable Python packages
   preprocessing/    Loading, grayscale conversion, denoising, contrast correction
   segmentation/     Classical segmentation

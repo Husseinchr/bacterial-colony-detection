@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -59,6 +59,7 @@ def main() -> None:
     print("")
     print(split_df.groupby(["split", "category"]).size().to_string())
     print(f"Saved splits to: {args.output_dir}")
+
 
 def nested_count_dict(frame, outer_column: str, inner_column: str) -> dict[str, dict[str, int]]:
     result: dict[str, dict[str, int]] = {}
