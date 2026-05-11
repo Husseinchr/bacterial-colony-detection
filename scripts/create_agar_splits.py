@@ -43,9 +43,12 @@ def main() -> None:
     split_summary = {
         "dataset": summary,
         "splits": split_df.groupby("split").size().astype(int).to_dict(),
-        "categories_by_split": {
-            split: values.astype(int).to_dict()
-            for split, values in split_df.groupby("split")["category"].value_counts().groupby(level=0)
+        "categories_by_split": nested_count_dict(split_df, "split", "category"),
+        "classes_by_split": nested_count_dict(split_df, "split", "primary_class"),
+        "task_splits": {
+            "detect_count": split_counts(split_df[split_df["detection_eligible"]]),
+            "species_image": split_counts(split_df[split_df["species_image_eligible"]]),
+            "countable_only": split_counts(split_df[split_df["category"] == "countable"]),
         },
     }
     with (args.output_dir / "summary.json").open("w", encoding="utf-8") as f:
@@ -56,6 +59,17 @@ def main() -> None:
     print("")
     print(split_df.groupby(["split", "category"]).size().to_string())
     print(f"Saved splits to: {args.output_dir}")
+
+def nested_count_dict(frame, outer_column: str, inner_column: str) -> dict[str, dict[str, int]]:
+    result: dict[str, dict[str, int]] = {}
+    counts = frame.groupby([outer_column, inner_column]).size()
+    for (outer, inner), value in counts.items():
+        result.setdefault(str(outer), {})[str(inner)] = int(value)
+    return result
+
+
+def split_counts(frame) -> dict[str, int]:
+    return {str(split): int(count) for split, count in frame.groupby("split").size().items()}
 
 
 if __name__ == "__main__":
