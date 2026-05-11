@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 import pandas as pd
 
+from src.classical.agar_evaluation import is_truthy, safe_output_name
 from src.classical.detect_count import (
     ClassicalCountConfig,
     CountPrediction,
@@ -79,3 +80,11 @@ def test_prediction_rows_are_csv_serializable(tmp_path: Path) -> None:
     loaded = pd.read_csv(path)
 
     assert loaded.loc[0, "predicted_count"] == 2
+
+
+def test_agar_evaluation_helpers_are_stable() -> None:
+    assert is_truthy(True)
+    assert is_truthy("true")
+    assert is_truthy("1")
+    assert not is_truthy(False)
+    assert safe_output_name("data/countable/sample.png", "_mask.png") == "data__countable__sample_mask.png"
