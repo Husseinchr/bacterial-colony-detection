@@ -33,6 +33,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-area", default=12.0, type=float)
     parser.add_argument("--max-area", default=10000.0, type=float)
     parser.add_argument("--min-circularity", default=0.05, type=float)
+    parser.add_argument("--use-plate-mask", action="store_true")
+    parser.add_argument("--plate-margin-ratio", default=0.04, type=float)
+    parser.add_argument("--use-peak-count-estimation", action="store_true")
+    parser.add_argument("--large-component-min-area", default=1200.0, type=float)
+    parser.add_argument("--peak-blur-kernel", default=5, type=int)
+    parser.add_argument("--peak-local-max-kernel", default=9, type=int)
+    parser.add_argument("--peak-relative-threshold", default=0.45, type=float)
+    parser.add_argument("--peak-min-distance", default=2.5, type=float)
+    parser.add_argument("--disable-area-count-estimation", action="store_true")
+    parser.add_argument("--area-count-scale", default=1.6, type=float)
     parser.add_argument("--max-images", default=0, type=int)
     parser.add_argument("--save-overlays", action="store_true")
     parser.add_argument("--overlay-limit", default=40, type=int)
@@ -74,6 +84,16 @@ def config_from_args(args: argparse.Namespace) -> ClassicalCountConfig:
         min_area=args.min_area,
         max_area=args.max_area,
         min_circularity=args.min_circularity,
+        use_plate_mask=args.use_plate_mask,
+        plate_margin_ratio=args.plate_margin_ratio,
+        use_peak_count_estimation=args.use_peak_count_estimation,
+        large_component_min_area=args.large_component_min_area,
+        peak_blur_kernel=args.peak_blur_kernel,
+        peak_local_max_kernel=args.peak_local_max_kernel,
+        peak_relative_threshold=args.peak_relative_threshold,
+        peak_min_distance=args.peak_min_distance,
+        use_area_count_estimation=not args.disable_area_count_estimation,
+        area_count_scale=args.area_count_scale,
     )
 
 

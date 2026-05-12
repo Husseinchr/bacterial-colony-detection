@@ -10,8 +10,10 @@ from src.classical.agar_evaluation import is_truthy, safe_output_name
 from src.classical.detect_count import (
     ClassicalCountConfig,
     CountPrediction,
+    apply_plate_mask,
     candidate_image_paths,
     count_colonies,
+    estimate_colony_count,
     evaluate_count_predictions,
 )
 
@@ -97,3 +99,34 @@ def test_candidate_image_paths_include_same_stem_extensions() -> None:
     assert Path("data/countable/1000.jpg") in candidates
     assert Path("data/countable/1000.png") in candidates
     assert Path("data/countable/1000.PNG") in candidates
+
+
+def test_plate_mask_removes_border_artifacts() -> None:
+    mask = np.zeros((120, 120), dtype=np.uint8)
+    cv2.rectangle(mask, (0, 0), (20, 20), 255, -1)
+    masked = apply_plate_mask(mask, ClassicalCountConfig(use_plate_mask=True, plate_margin_ratio=0.1))
+
+    assert masked[10, 10] == 0
+
+
+def test_peak_estimation_recovers_merged_colonies() -> None:
+    mask = np.zeros((160, 160), dtype=np.uint8)
+    centers = [(55, 80), (80, 80), (105, 80)]
+    for center in centers:
+        cv2.circle(mask, center, 22, 255, -1)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    count = estimate_colony_count(
+        mask,
+        contours,
+        ClassicalCountConfig(
+            use_peak_count_estimation=True,
+            large_component_min_area=400,
+            peak_relative_threshold=0.35,
+            peak_local_max_kernel=7,
+            peak_blur_kernel=3,
+            area_count_scale=2.0,
+        ),
+    )
+
+    assert count >= 3

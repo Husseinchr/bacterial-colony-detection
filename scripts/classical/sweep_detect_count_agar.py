@@ -29,8 +29,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-circularities", default="0.05,0.15")
     parser.add_argument("--morph-open-kernels", default="5,7")
     parser.add_argument("--morph-close-kernels", default="3")
+    parser.add_argument("--max-areas", default="10000")
     parser.add_argument("--threshold-methods", default="otsu")
     parser.add_argument("--threshold-polarities", default="dark")
+    parser.add_argument("--plate-mask-options", default="false")
+    parser.add_argument("--plate-margin-ratios", default="0.04")
+    parser.add_argument("--peak-count-options", default="false")
+    parser.add_argument("--large-component-min-areas", default="1200")
+    parser.add_argument("--peak-blur-kernels", default="5")
+    parser.add_argument("--peak-local-max-kernels", default="9")
+    parser.add_argument("--peak-relative-thresholds", default="0.45")
+    parser.add_argument("--peak-min-distances", default="2.5")
+    parser.add_argument("--area-count-estimation-options", default="true")
+    parser.add_argument("--area-count-scales", default="1.6")
     parser.add_argument("--max-images", default=0, type=int)
     parser.add_argument("--best-overlays", action="store_true")
     parser.add_argument("--overlay-limit", default=40, type=int)
@@ -130,8 +141,38 @@ def build_grid(args: argparse.Namespace):
         parse_float_list(args.min_circularities),
         parse_int_list(args.morph_open_kernels),
         parse_int_list(args.morph_close_kernels),
+        parse_float_list(args.max_areas),
+        parse_bool_list(args.plate_mask_options),
+        parse_float_list(args.plate_margin_ratios),
+        parse_bool_list(args.peak_count_options),
+        parse_float_list(args.large_component_min_areas),
+        parse_int_list(args.peak_blur_kernels),
+        parse_int_list(args.peak_local_max_kernels),
+        parse_float_list(args.peak_relative_thresholds),
+        parse_float_list(args.peak_min_distances),
+        parse_bool_list(args.area_count_estimation_options),
+        parse_float_list(args.area_count_scales),
     ):
-        threshold_method, threshold_polarity, background_kernel, min_area, min_circularity, open_kernel, close_kernel = values
+        (
+            threshold_method,
+            threshold_polarity,
+            background_kernel,
+            min_area,
+            min_circularity,
+            open_kernel,
+            close_kernel,
+            max_area,
+            use_plate_mask,
+            plate_margin_ratio,
+            use_peak_count_estimation,
+            large_component_min_area,
+            peak_blur_kernel,
+            peak_local_max_kernel,
+            peak_relative_threshold,
+            peak_min_distance,
+            use_area_count_estimation,
+            area_count_scale,
+        ) = values
         yield ClassicalCountConfig(
             threshold_method=threshold_method,
             threshold_polarity=threshold_polarity,
@@ -140,6 +181,17 @@ def build_grid(args: argparse.Namespace):
             min_circularity=min_circularity,
             morph_open_kernel=open_kernel,
             morph_close_kernel=close_kernel,
+            max_area=max_area,
+            use_plate_mask=use_plate_mask,
+            plate_margin_ratio=plate_margin_ratio,
+            use_peak_count_estimation=use_peak_count_estimation,
+            large_component_min_area=large_component_min_area,
+            peak_blur_kernel=peak_blur_kernel,
+            peak_local_max_kernel=peak_local_max_kernel,
+            peak_relative_threshold=peak_relative_threshold,
+            peak_min_distance=peak_min_distance,
+            use_area_count_estimation=use_area_count_estimation,
+            area_count_scale=area_count_scale,
         )
 
 
@@ -191,6 +243,16 @@ def config_from_record(record: dict) -> ClassicalCountConfig:
         min_area=float(record["min_area"]),
         max_area=float(record.get("max_area", 10000.0)),
         min_circularity=float(record["min_circularity"]),
+        use_plate_mask=bool(record.get("use_plate_mask", False)),
+        plate_margin_ratio=float(record.get("plate_margin_ratio", 0.04)),
+        use_peak_count_estimation=bool(record.get("use_peak_count_estimation", False)),
+        large_component_min_area=float(record.get("large_component_min_area", 1200.0)),
+        peak_blur_kernel=int(record.get("peak_blur_kernel", 5)),
+        peak_local_max_kernel=int(record.get("peak_local_max_kernel", 9)),
+        peak_relative_threshold=float(record.get("peak_relative_threshold", 0.45)),
+        peak_min_distance=float(record.get("peak_min_distance", 2.5)),
+        use_area_count_estimation=bool(record.get("use_area_count_estimation", True)),
+        area_count_scale=float(record.get("area_count_scale", 1.6)),
     )
 
 
@@ -212,6 +274,11 @@ def parse_float_list(value: str) -> list[float]:
 
 def parse_str_list(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def parse_bool_list(value: str) -> list[bool]:
+    mapping = {"true": True, "false": False, "1": True, "0": False, "yes": True, "no": False}
+    return [mapping[item.strip().lower()] for item in value.split(",") if item.strip()]
 
 
 if __name__ == "__main__":

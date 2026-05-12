@@ -27,6 +27,16 @@ class ClassicalCountConfig:
     min_area: float = 12.0
     max_area: float = 10000.0
     min_circularity: float = 0.05
+    use_plate_mask: bool = False
+    plate_margin_ratio: float = 0.04
+    use_peak_count_estimation: bool = False
+    large_component_min_area: float = 1200.0
+    peak_blur_kernel: int = 5
+    peak_local_max_kernel: int = 9
+    peak_relative_threshold: float = 0.45
+    peak_min_distance: float = 2.5
+    use_area_count_estimation: bool = True
+    area_count_scale: float = 1.6
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -55,8 +65,10 @@ def count_colonies(image: np.ndarray, config: ClassicalCountConfig | None = None
     prepared = preprocess_image(image, active_config)
     binary = threshold_image(prepared, active_config)
     cleaned = clean_mask(binary, active_config)
-    mask, contours = filter_components(cleaned, active_config)
-    return len(contours), mask, contours
+    masked = apply_plate_mask(cleaned, active_config)
+    mask, contours = filter_components(masked, active_config)
+    count = estimate_colony_count(mask, contours, active_config)
+    return count, mask, contours
 
 
 def preprocess_image(image: np.ndarray, config: ClassicalCountConfig) -> np.ndarray:
@@ -139,6 +151,102 @@ def filter_components(mask: np.ndarray, config: ClassicalCountConfig) -> tuple[n
     if kept:
         cv2.drawContours(output, kept, -1, 255, thickness=cv2.FILLED)
     return output, kept
+
+
+def apply_plate_mask(mask: np.ndarray, config: ClassicalCountConfig) -> np.ndarray:
+    if not config.use_plate_mask:
+        return mask
+    height, width = mask.shape[:2]
+    plate = np.zeros((height, width), dtype=np.uint8)
+    radius = max(1, int(round(min(height, width) * 0.5 * max(0.1, 1.0 - config.plate_margin_ratio))))
+    cv2.circle(plate, (width // 2, height // 2), radius, 255, thickness=cv2.FILLED)
+    return cv2.bitwise_and(mask, plate)
+
+
+def estimate_colony_count(mask: np.ndarray, contours: list[np.ndarray], config: ClassicalCountConfig) -> int:
+    if not contours:
+        return 0
+    reference_area = estimate_reference_area(contours, config)
+    total = 0
+    for contour in contours:
+        total += estimate_component_count(mask, contour, reference_area, config)
+    return int(total)
+
+
+def estimate_reference_area(contours: list[np.ndarray], config: ClassicalCountConfig) -> float:
+    areas = sorted(float(cv2.contourArea(contour)) for contour in contours)
+    if not areas:
+        return float(max(config.min_area, 1.0))
+    sample_size = max(1, len(areas) // 2)
+    reference = float(np.median(np.array(areas[:sample_size], dtype=np.float64)))
+    return max(float(config.min_area), reference)
+
+
+def estimate_component_count(
+    mask: np.ndarray,
+    contour: np.ndarray,
+    reference_area: float,
+    config: ClassicalCountConfig,
+) -> int:
+    area = float(cv2.contourArea(contour))
+    if not config.use_peak_count_estimation:
+        return 1
+    split_threshold = float(config.large_component_min_area)
+    if area < split_threshold:
+        return 1
+    peak_estimate, distance_reference_area = analyze_distance_map(mask, contour, config)
+    effective_reference_area = reference_area
+    if distance_reference_area > 0:
+        effective_reference_area = min(reference_area, distance_reference_area)
+    estimates = [1, peak_estimate]
+    if config.use_area_count_estimation:
+        scaled_area = max(effective_reference_area * float(config.area_count_scale), 1.0)
+        estimates.append(int(max(1, round(area / scaled_area))))
+    return int(max(estimates))
+
+
+def analyze_distance_map(mask: np.ndarray, contour: np.ndarray, config: ClassicalCountConfig) -> tuple[int, float]:
+    x, y, width, height = cv2.boundingRect(contour)
+    pad = max(2, odd_kernel(config.peak_local_max_kernel))
+    x0 = max(0, x - pad)
+    y0 = max(0, y - pad)
+    x1 = min(mask.shape[1], x + width + pad)
+    y1 = min(mask.shape[0], y + height + pad)
+    roi_mask = np.zeros((y1 - y0, x1 - x0), dtype=np.uint8)
+    shifted = contour.copy()
+    shifted[:, :, 0] -= x0
+    shifted[:, :, 1] -= y0
+    cv2.drawContours(roi_mask, [shifted], -1, 255, thickness=cv2.FILLED)
+    distance = cv2.distanceTransform(roi_mask, cv2.DIST_L2, 5)
+    blur_kernel = odd_kernel(config.peak_blur_kernel)
+    if blur_kernel > 1:
+        distance = cv2.GaussianBlur(distance, (blur_kernel, blur_kernel), 0)
+    max_distance = float(distance.max())
+    if max_distance <= 0:
+        return 0, 0.0
+    local_kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE,
+        (odd_kernel(config.peak_local_max_kernel), odd_kernel(config.peak_local_max_kernel)),
+    )
+    dilated = cv2.dilate(distance, local_kernel)
+    threshold_values = [
+        float(config.peak_relative_threshold),
+        min(0.95, float(config.peak_relative_threshold) + 0.15),
+        min(0.98, float(config.peak_relative_threshold) + 0.30),
+    ]
+    peak_count = 0
+    for threshold_value in threshold_values:
+        threshold = max(float(config.peak_min_distance), max_distance * threshold_value)
+        seed_mask = ((distance >= threshold) & (roi_mask > 0)).astype(np.uint8)
+        seed_components, _ = cv2.connectedComponents(seed_mask)
+        peak_count = max(peak_count, int(seed_components - 1))
+    maxima = (distance >= max(float(config.peak_min_distance), max_distance * float(config.peak_relative_threshold)))
+    maxima &= distance >= (dilated - 1e-6)
+    maxima &= roi_mask > 0
+    maxima_components, _ = cv2.connectedComponents(maxima.astype(np.uint8))
+    peak_count = max(peak_count, int(maxima_components - 1))
+    single_colony_area = float(pi * max_distance * max_distance)
+    return max(0, peak_count), single_colony_area
 
 
 def render_count_overlay(image: np.ndarray, count: int, contours: list[np.ndarray]) -> np.ndarray:
