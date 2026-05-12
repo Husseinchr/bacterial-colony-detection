@@ -2,6 +2,11 @@
 
 Scripts are grouped by project phase and task.
 
+## UI
+
+- `ui/streamlit_app.py` is the local Streamlit workbench for testing saved models on single images.
+- The UI includes classical counting presets, a classical species-model preset for the current Colab sweep best-run path, and placeholder status panels for later YOLO and U-Net integration.
+
 ## `datasets/`
 
 Dataset inspection, split creation, and annotation QA utilities for AGAR-primary.
