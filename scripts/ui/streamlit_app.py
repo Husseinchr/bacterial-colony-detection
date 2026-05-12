@@ -17,6 +17,8 @@ from src.ui.inference import (
     classify_with_classical_species_model,
     config_rows,
     count_with_classical_model,
+    inspect_species_model_path,
+    inspect_uploaded_species_model,
     load_image_input,
     mask_to_rgb,
 )
@@ -240,8 +242,8 @@ def render_sidebar():
 def render_header(task: str, model_family: str) -> None:
     statuses = (
         ("Active task", task, model_family),
-        ("Classical count", "Frozen", "config 23 baseline"),
-        ("Classical species", "Selected", "val F1 0.5708"),
+        ("Classical count", "Locked", "test MAE 33.53"),
+        ("Classical species", "Locked", "test F1 0.6036"),
         ("Next phases", "Pending", "YOLO and U-Net"),
     )
     cards = "\n".join(
@@ -297,7 +299,7 @@ def render_classical_counting(image, source_name: str) -> None:
             preset_name = st.selectbox("Counting preset", options=list(CLASSICAL_COUNT_PRESETS.keys()) + ["Config JSON path"])
             config_json_path = st.text_input("Config JSON path", value="") if preset_name == "Config JSON path" else ""
             run = st.button("Run counting", type="primary", use_container_width=True)
-            st.caption("Validation baseline is frozen at config 23 unless a saved config JSON is selected.")
+            st.caption("Locked baseline is config 23 unless a saved config JSON is selected.")
     with result_col:
         render_input_panel(image, source_name)
         with st.container(border=True):
@@ -328,11 +330,34 @@ def render_classical_classification(image, source_name: str) -> None:
         with st.container(border=True):
             st.subheader("Classical Classification")
             preset_names = list(CLASSICAL_SPECIES_MODEL_PRESETS.keys()) + ["Manual path"]
-            preset_name = st.selectbox("Species model", options=preset_names)
-            default_path = CLASSICAL_SPECIES_MODEL_PRESETS.get(preset_name, "")
-            model_json_path = st.text_input("Model JSON path", value=default_path)
-            run = st.button("Run classification", type="primary", use_container_width=True)
-            st.caption("Use the best validation-selected classical species model.")
+            preset_name = st.selectbox("Species model", options=preset_names, key="species_model_preset")
+            preset_path = CLASSICAL_SPECIES_MODEL_PRESETS.get(preset_name, "")
+            current_preset_state = st.session_state.get("species_model_preset_previous")
+            if current_preset_state != preset_name:
+                if preset_name != "Manual path":
+                    st.session_state["species_model_json_path"] = preset_path
+                elif "species_model_json_path" not in st.session_state:
+                    st.session_state["species_model_json_path"] = ""
+                st.session_state["species_model_preset_previous"] = preset_name
+            uploaded_model_file = st.file_uploader("Model JSON upload", type=["json"], key="species_model_json_upload")
+            model_json_path = st.text_input("Model JSON path", key="species_model_json_path")
+            uploaded_model_bytes = uploaded_model_file.getvalue() if uploaded_model_file is not None else None
+            uploaded_model_name = uploaded_model_file.name if uploaded_model_file is not None else ""
+            model_status = inspect_species_model_path(model_json_path, ROOT)
+            upload_status = inspect_uploaded_species_model(uploaded_model_bytes, uploaded_model_name)
+            reject_empty_unsupported = st.checkbox(
+                "Reject likely empty plates",
+                value=True,
+                help="Keep species classification for countable and uncountable plates, but avoid forcing a species label on likely empty plates.",
+            )
+            render_model_source_status(upload_status, model_status)
+            run = st.button(
+                "Run classification",
+                type="primary",
+                use_container_width=True,
+                disabled=(not upload_status.ready and not model_status.ready) or image is None,
+            )
+            st.caption("Uploaded model JSON overrides the path field. Use a local path only when you want the app to load a model from disk.")
     with result_col:
         render_input_panel(image, source_name)
         with st.container(border=True):
@@ -344,7 +369,12 @@ def render_classical_classification(image, source_name: str) -> None:
                 st.error("Provide an image before running classification.")
                 return
             try:
-                result = classify_with_classical_species_model(image=image, model_json_path=model_json_path)
+                result = classify_with_classical_species_model(
+                    image=image,
+                    model_json_path=model_json_path,
+                    model_json_bytes=uploaded_model_bytes,
+                    reject_empty_unsupported=reject_empty_unsupported,
+                )
             except Exception as exc:
                 st.error(str(exc))
                 return
@@ -352,6 +382,8 @@ def render_classical_classification(image, source_name: str) -> None:
             metric_a.metric("Predicted class", result.predicted_class)
             metric_b.metric("Classifier", result.classifier_type)
             metric_c.metric("Distance", f"{result.distance:.3f}")
+            if not result.accepted:
+                st.warning(result.rejection_reason)
             st.caption(f"Image source: {source_name}")
             render_config_table(result.config)
 
@@ -367,6 +399,26 @@ def render_input_panel(image, source_name: str) -> None:
 
 def render_config_table(config: dict) -> None:
     st.dataframe(pd.DataFrame(config_rows(config)), use_container_width=True, hide_index=True)
+
+
+def render_model_source_status(upload_status, path_status) -> None:
+    if upload_status.ready:
+        st.success(upload_status.message)
+        return
+    if upload_status.path and upload_status.message != "Upload a species model JSON or provide a local path.":
+        st.error(upload_status.message)
+        return
+    if path_status.ready:
+        st.success(path_status.message)
+        return
+    if path_status.is_colab_path:
+        st.warning(path_status.message)
+    else:
+        st.info(path_status.message)
+    if path_status.local_candidates:
+        st.caption("Detected local species model candidates:")
+        for candidate in path_status.local_candidates:
+            st.code(candidate, language="text")
 
 
 if __name__ == "__main__":

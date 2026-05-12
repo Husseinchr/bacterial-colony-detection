@@ -350,6 +350,11 @@ def load_species_model(path: Path) -> ClassicalSpeciesClassifier:
     return ClassicalSpeciesClassifier.from_dict(data)
 
 
+def load_species_model_bytes(model_bytes: bytes) -> ClassicalSpeciesClassifier:
+    data = json.loads(model_bytes.decode("utf-8"))
+    return ClassicalSpeciesClassifier.from_dict(data)
+
+
 def save_species_evaluation(evaluation: SpeciesEvaluation, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame([asdict(prediction) for prediction in evaluation.predictions]).to_csv(
