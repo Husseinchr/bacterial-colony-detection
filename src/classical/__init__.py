@@ -6,6 +6,7 @@ from src.classical.detect_count import (
     evaluate_count_predictions,
 )
 from src.classical.agar_evaluation import run_agar_count_evaluation
+from src.classical.count_error_analysis import analyze_count_predictions
 from src.classical.species_classification import (
     NearestCentroidSpeciesClassifier,
     SpeciesFeatureConfig,
@@ -20,6 +21,7 @@ __all__ = [
     "count_colonies",
     "evaluate_count_predictions",
     "run_agar_count_evaluation",
+    "analyze_count_predictions",
     "NearestCentroidSpeciesClassifier",
     "SpeciesFeatureConfig",
     "evaluate_species_classifier",
