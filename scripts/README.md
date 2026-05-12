@@ -11,7 +11,7 @@ Dataset inspection, split creation, and annotation QA utilities for AGAR-primary
 Classical computer-vision model evaluation and tuning entrypoints.
 
 - `evaluate_detect_count_agar.py` runs one classical counting configuration.
-- `sweep_detect_count_agar.py` tunes classical counting parameters on a validation split.
+- `sweep_detect_count_agar.py` tunes classical counting parameters on a validation split and writes incremental progress.
 - `train_species_image_agar.py` trains and validates the classical image-level species classifier.
 - `evaluate_species_image_agar.py` evaluates a saved classical image-level species classifier.
 
