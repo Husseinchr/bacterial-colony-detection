@@ -62,7 +62,7 @@ def main() -> None:
         overlay_limit=args.overlay_limit,
     )
 
-    print("Classical AGAR detection/counting validation summary")
+    print("Classical AGAR detection/counting evaluation summary")
     for key, value in evaluation.metrics.items():
         if key != "config":
             print(f"{key}: {value}")

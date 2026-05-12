@@ -176,6 +176,14 @@ def apply_styles() -> None:
         div[data-testid="stMetric"] label {
             color: #5f7068;
         }
+        div[data-testid="stMetric"] div[data-testid="stMetricValue"],
+        div[data-testid="stMetric"] div[data-testid="stMetricValue"] * {
+            color: #16211c;
+        }
+        div[data-testid="stMetric"] div[data-testid="stMetricLabel"],
+        div[data-testid="stMetric"] div[data-testid="stMetricLabel"] * {
+            color: #5f7068;
+        }
         div[data-baseweb="select"] > div,
         input,
         textarea {
