@@ -10,6 +10,7 @@ from src.classical.agar_evaluation import is_truthy, safe_output_name
 from src.classical.detect_count import (
     ClassicalCountConfig,
     CountPrediction,
+    candidate_image_paths,
     count_colonies,
     evaluate_count_predictions,
 )
@@ -88,3 +89,11 @@ def test_agar_evaluation_helpers_are_stable() -> None:
     assert is_truthy("1")
     assert not is_truthy(False)
     assert safe_output_name("data/countable/sample.png", "_mask.png") == "data__countable__sample_mask.png"
+
+
+def test_candidate_image_paths_include_same_stem_extensions() -> None:
+    candidates = candidate_image_paths(Path("data/countable/1000.jpg"))
+
+    assert Path("data/countable/1000.jpg") in candidates
+    assert Path("data/countable/1000.png") in candidates
+    assert Path("data/countable/1000.PNG") in candidates

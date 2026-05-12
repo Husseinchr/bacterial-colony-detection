@@ -9,6 +9,9 @@ import cv2
 import numpy as np
 
 
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff")
+
+
 @dataclass(frozen=True)
 class ClassicalCountConfig:
     gaussian_kernel: int = 5
@@ -183,10 +186,27 @@ def evaluate_count_predictions(predictions: list[CountPrediction], config: Class
 
 
 def read_image(path: Path) -> np.ndarray:
-    image = cv2.imread(str(path), cv2.IMREAD_COLOR)
-    if image is None:
-        raise FileNotFoundError(f"Could not read image: {path}")
-    return image
+    tried = []
+    for candidate in candidate_image_paths(path):
+        tried.append(candidate)
+        image = cv2.imread(str(candidate), cv2.IMREAD_COLOR)
+        if image is not None:
+            return image
+    attempted = ", ".join(str(candidate) for candidate in tried)
+    raise FileNotFoundError(f"Could not read image: {path}. Tried: {attempted}")
+
+
+def candidate_image_paths(path: Path) -> list[Path]:
+    candidates = [path]
+    suffixes = []
+    for extension in IMAGE_EXTENSIONS:
+        suffixes.append(extension)
+        suffixes.append(extension.upper())
+    for suffix in suffixes:
+        candidate = path.with_suffix(suffix)
+        if candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
 
 
 def normalize_uint8(image: np.ndarray) -> np.ndarray:
