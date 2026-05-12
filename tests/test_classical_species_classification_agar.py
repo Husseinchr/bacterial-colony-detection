@@ -12,6 +12,7 @@ from src.classical.species_classification import (
     extract_species_features,
     load_species_model,
     save_species_model,
+    select_species_classifier,
     train_species_classifier,
 )
 
@@ -27,9 +28,10 @@ def test_species_features_are_stable() -> None:
 
     features = extract_species_features(image, SpeciesFeatureConfig(image_size=32))
 
-    assert "feature_b_mean" in features
-    assert "feature_hue_hist_00" in features
-    assert "feature_edge_density" in features
+    assert "feature_global_b_mean" in features
+    assert "feature_global_hue_hist_00" in features
+    assert "feature_center_edge_density" in features
+    assert "feature_radial_gray_mean_0" in features
     assert all(np.isfinite(value) for value in features.values())
 
 
@@ -70,6 +72,40 @@ def test_nearest_centroid_species_classifier_learns_color_classes(tmp_path: Path
     assert evaluation.metrics["macro_f1"] == 1.0
 
 
+def test_species_classifier_selection_returns_best_candidate(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "dataset"
+    rows = []
+    for label, color in {"A": (10, 20, 220), "B": (220, 20, 10)}.items():
+        for index in range(4):
+            relative = f"data/countable/{label}_{index}.png"
+            write_image(dataset_dir / relative, color)
+            rows.append(
+                {
+                    "image_path": relative,
+                    "primary_class": label,
+                    "category": "countable",
+                    "species_image_eligible": True,
+                }
+            )
+    train_csv = tmp_path / "train.csv"
+    val_csv = tmp_path / "val.csv"
+    pd.DataFrame(rows).to_csv(train_csv, index=False)
+    pd.DataFrame(rows).to_csv(val_csv, index=False)
+
+    model, train_features, val_features, selection = select_species_classifier(
+        dataset_dir,
+        train_csv,
+        val_csv,
+        SpeciesFeatureConfig(image_size=32),
+        classifier_types=("centroid_l2", "knn_3"),
+    )
+
+    assert model.classifier_type in {"centroid_l2", "knn_3"}
+    assert not train_features.empty
+    assert not val_features.empty
+    assert list(selection.columns) == ["classifier_type", "accuracy", "macro_f1", "macro_precision", "macro_recall"]
+
+
 def test_species_model_roundtrip(tmp_path: Path) -> None:
     dataset_dir = tmp_path / "dataset"
     rows = []
@@ -94,3 +130,4 @@ def test_species_model_roundtrip(tmp_path: Path) -> None:
 
     assert loaded.classes == model.classes
     assert loaded.feature_names == model.feature_names
+    assert loaded.classifier_type == model.classifier_type
