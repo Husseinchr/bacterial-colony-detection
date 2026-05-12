@@ -7,6 +7,11 @@ from pathlib import Path
 
 import pandas as pd
 
+try:
+    import torch
+except ModuleNotFoundError:
+    torch = None
+
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -32,7 +37,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     try:
-        import torch
+        if torch is None:
+            raise ModuleNotFoundError("torch")
         from torch.utils.data import DataLoader
     except ModuleNotFoundError as exc:
         raise RuntimeError("PyTorch is required for U-Net training. Install torch in Colab before running this script.") from exc
