@@ -5,7 +5,7 @@ Scripts are grouped by project phase and task.
 ## UI
 
 - `ui/streamlit_app.py` is the local Streamlit workbench for testing saved models on single images.
-- The UI includes classical counting presets, direct upload support for classical species `model.json` files, a classical species-model preset for the current Colab sweep best-run path, and placeholder status panels for later YOLO and U-Net integration.
+- The UI includes classical counting presets, direct upload support for classical species `model.json` files, direct upload and local-path support for locked U-Net counting `model.pt` checkpoints, a classical species-model preset for the current Colab sweep best-run path, and placeholder status panels for the remaining backends.
 
 ## `datasets/`
 

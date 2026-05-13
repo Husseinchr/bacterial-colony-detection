@@ -13,12 +13,16 @@ if str(ROOT) not in sys.path:
 from src.ui.inference import (
     CLASSICAL_COUNT_PRESETS,
     CLASSICAL_SPECIES_MODEL_PRESETS,
+    UNET_COUNT_MODEL_PRESETS,
     bgr_to_rgb,
     classify_with_classical_species_model,
     config_rows,
     count_with_classical_model,
+    count_with_unet_model,
     inspect_species_model_path,
+    inspect_unet_count_model_path,
     inspect_uploaded_species_model,
+    inspect_uploaded_unet_count_model,
     load_image_input,
     mask_to_rgb,
 )
@@ -213,14 +217,20 @@ def main() -> None:
     render_header(task, model_family)
     image, source_name = resolve_input(uploaded_file, image_path)
 
+    if model_family == "Classical":
+        if task == "Counting":
+            render_classical_counting(image, source_name)
+        else:
+            render_classical_classification(image, source_name)
+        return
+
+    if model_family == "U-Net" and task == "Counting":
+        render_unet_counting(image, source_name)
+        return
+
     if model_family != "Classical":
         render_unavailable_family(task, model_family, image, source_name)
         return
-
-    if task == "Counting":
-        render_classical_counting(image, source_name)
-    else:
-        render_classical_classification(image, source_name)
 
 
 def render_sidebar():
@@ -244,7 +254,7 @@ def render_header(task: str, model_family: str) -> None:
         ("Active task", task, model_family),
         ("Classical count", "Locked", "test MAE 33.53"),
         ("Classical species", "Locked", "test F1 0.6036"),
-        ("Next phases", "Pending", "YOLO and U-Net"),
+        ("U-Net count", "Locked", "test MAE 11.33"),
     )
     cards = "\n".join(
         f"""
@@ -260,7 +270,7 @@ def render_header(task: str, model_family: str) -> None:
         f"""
         <div class="app-shell">
             <div class="app-title">Bacterial Colony Model Tester</div>
-            <div class="phase-line">Single-image workbench for the AGAR-primary classical baselines.</div>
+            <div class="phase-line">Single-image workbench for the AGAR-primary classical and U-Net counting baselines.</div>
             <div class="status-grid">{cards}</div>
         </div>
         """,
@@ -388,6 +398,67 @@ def render_classical_classification(image, source_name: str) -> None:
             render_config_table(result.config)
 
 
+def render_unet_counting(image, source_name: str) -> None:
+    control_col, result_col = st.columns([0.9, 1.35])
+    with control_col:
+        with st.container(border=True):
+            st.subheader("U-Net Counting")
+            preset_names = list(UNET_COUNT_MODEL_PRESETS.keys()) + ["Manual path"]
+            preset_name = st.selectbox("U-Net checkpoint", options=preset_names, key="unet_count_model_preset")
+            preset_path = UNET_COUNT_MODEL_PRESETS.get(preset_name, "")
+            current_preset_state = st.session_state.get("unet_count_model_preset_previous")
+            if current_preset_state != preset_name:
+                if preset_name != "Manual path":
+                    st.session_state["unet_count_model_pt_path"] = preset_path
+                elif "unet_count_model_pt_path" not in st.session_state:
+                    st.session_state["unet_count_model_pt_path"] = ""
+                st.session_state["unet_count_model_preset_previous"] = preset_name
+            uploaded_model_file = st.file_uploader("Model checkpoint upload", type=["pt"], key="unet_count_model_pt_upload")
+            model_pt_path = st.text_input("Model checkpoint path", key="unet_count_model_pt_path")
+            uploaded_model_bytes = uploaded_model_file.getvalue() if uploaded_model_file is not None else None
+            uploaded_model_name = uploaded_model_file.name if uploaded_model_file is not None else ""
+            upload_status = inspect_uploaded_unet_count_model(uploaded_model_bytes, uploaded_model_name)
+            path_status = inspect_unet_count_model_path(model_pt_path, ROOT)
+            threshold = st.number_input("Segmentation threshold", min_value=0.05, max_value=0.95, value=0.5, step=0.05)
+            min_component_area = st.number_input("Minimum component area", min_value=1, max_value=128, value=2, step=1)
+            render_unet_count_model_source_status(upload_status, path_status)
+            run = st.button(
+                "Run U-Net counting",
+                type="primary",
+                use_container_width=True,
+                disabled=(not upload_status.ready and not path_status.ready) or image is None,
+            )
+            st.caption("Locked test configuration uses threshold 0.50 and minimum component area 2. Uploaded checkpoint overrides the path field.")
+    with result_col:
+        render_input_panel(image, source_name)
+        with st.container(border=True):
+            st.markdown('<div class="result-title">Counting Result</div>', unsafe_allow_html=True)
+            if not run:
+                st.markdown('<div class="result-muted">No U-Net counting run in this session.</div>', unsafe_allow_html=True)
+                return
+            if image is None:
+                st.error("Provide an image before running counting.")
+                return
+            try:
+                result = count_with_unet_model(
+                    image=image,
+                    model_pt_path=model_pt_path,
+                    model_pt_bytes=uploaded_model_bytes,
+                    threshold=float(threshold),
+                    min_component_area=int(min_component_area),
+                )
+            except Exception as exc:
+                st.error(str(exc))
+                return
+            metric_a, metric_b = st.columns(2)
+            metric_a.metric("Predicted count", result.predicted_count)
+            metric_b.metric("Image source", source_name)
+            view_a, view_b = st.columns(2)
+            view_a.image(bgr_to_rgb(result.overlay_bgr), caption="Overlay", use_container_width=True)
+            view_b.image(mask_to_rgb(result.mask), caption="Predicted mask", use_container_width=True)
+            render_config_table(result.config)
+
+
 def render_input_panel(image, source_name: str) -> None:
     with st.container(border=True):
         st.subheader("Input Image")
@@ -417,6 +488,26 @@ def render_model_source_status(upload_status, path_status) -> None:
         st.info(path_status.message)
     if path_status.local_candidates:
         st.caption("Detected local species model candidates:")
+        for candidate in path_status.local_candidates:
+            st.code(candidate, language="text")
+
+
+def render_unet_count_model_source_status(upload_status, path_status) -> None:
+    if upload_status.ready:
+        st.success(upload_status.message)
+        return
+    if upload_status.path and upload_status.message != "Upload a U-Net counting model checkpoint or provide a local path.":
+        st.error(upload_status.message)
+        return
+    if path_status.ready:
+        st.success(path_status.message)
+        return
+    if path_status.is_colab_path:
+        st.warning(path_status.message)
+    else:
+        st.info(path_status.message)
+    if path_status.local_candidates:
+        st.caption("Detected local U-Net counting checkpoint candidates:")
         for candidate in path_status.local_candidates:
             st.code(candidate, language="text")
 

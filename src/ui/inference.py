@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
+import io
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,16 @@ class SpeciesModelPathStatus:
     local_candidates: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class UNetCountModelPathStatus:
+    path: str
+    exists: bool
+    ready: bool
+    is_colab_path: bool
+    message: str
+    local_candidates: tuple[str, ...]
+
+
 CLASSICAL_COUNT_PRESETS = {
     "Config 23 baseline": ClassicalCountConfig(
         threshold_method="otsu",
@@ -88,6 +99,11 @@ CLASSICAL_COUNT_PRESETS = {
 
 CLASSICAL_SPECIES_MODEL_PRESETS = {
     "Latest sweep best run": "/content/drive/MyDrive/bacterial_colony_detection/outputs/classical_species_image/val_sweep_001/best_run/model.json",
+}
+
+
+UNET_COUNT_MODEL_PRESETS = {
+    "Locked test best run": "/content/drive/MyDrive/bacterial_colony_detection/outputs/unet_count/train_run_001/model.pt",
 }
 
 
@@ -134,6 +150,48 @@ def count_with_classical_model(
         overlay_bgr=overlay,
         mask=mask,
         config=config.to_dict(),
+    )
+
+
+def count_with_unet_model(
+    image: np.ndarray,
+    model_pt_path: str = "",
+    model_pt_bytes: bytes | None = None,
+    threshold: float = 0.5,
+    min_component_area: int = 2,
+) -> CountingInferenceResult:
+    try:
+        import torch
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("PyTorch is required for local U-Net inference. Install torch in the local environment before using this model family.") from exc
+
+    from src.unet.torch_backend import UNetSegmenter
+
+    checkpoint = load_unet_count_checkpoint(model_pt_path=model_pt_path, model_pt_bytes=model_pt_bytes)
+    image_size = int(checkpoint.get("image_size", 256))
+    base_channels = int(checkpoint.get("base_channels", 32))
+    model = UNetSegmenter(base_channels=base_channels)
+    model.load_state_dict(checkpoint["state_dict"])
+    model.eval()
+    image_tensor = prepare_unet_count_image_tensor(image, image_size)
+    with torch.no_grad():
+        logits = model(image_tensor)
+        prob_mask = torch.sigmoid(logits)[0, 0].cpu().numpy()
+    mask = ((prob_mask >= float(threshold)).astype(np.uint8)) * 255
+    predicted_count = count_connected_components(mask, int(min_component_area))
+    resized_mask = resize_binary_mask(mask, image.shape[:2])
+    overlay = render_segmentation_overlay(image, resized_mask)
+    return CountingInferenceResult(
+        predicted_count=int(predicted_count),
+        overlay_bgr=overlay,
+        mask=resized_mask,
+        config={
+            "model_type": str(checkpoint.get("model_type", "unet_count_segmenter")),
+            "image_size": image_size,
+            "base_channels": base_channels,
+            "threshold": float(threshold),
+            "min_component_area": int(min_component_area),
+        },
     )
 
 
@@ -259,6 +317,84 @@ def inspect_uploaded_species_model(model_json_bytes: bytes | None, uploaded_name
     )
 
 
+def inspect_unet_count_model_path(model_pt_path: str, search_root: Path | None = None) -> UNetCountModelPathStatus:
+    raw_path = model_pt_path.strip()
+    if not raw_path:
+        return UNetCountModelPathStatus(
+            path="",
+            exists=False,
+            ready=False,
+            is_colab_path=False,
+            message="Provide a local U-Net counting model .pt path.",
+            local_candidates=find_local_unet_count_model_candidates(search_root),
+        )
+    path = Path(raw_path)
+    exists = path.exists()
+    is_colab = raw_path.startswith("/content/")
+    local_candidates = find_local_unet_count_model_candidates(search_root)
+    if exists:
+        return UNetCountModelPathStatus(
+            path=str(path),
+            exists=True,
+            ready=True,
+            is_colab_path=is_colab,
+            message=f"Local U-Net checkpoint is ready: {path}",
+            local_candidates=local_candidates,
+        )
+    if is_colab:
+        return UNetCountModelPathStatus(
+            path=str(path),
+            exists=False,
+            ready=False,
+            is_colab_path=True,
+            message=(
+                "This preset points to a Colab or Google Drive path under /content/. "
+                "The local Streamlit app cannot read that location. Use a local model.pt path or upload the checkpoint."
+            ),
+            local_candidates=local_candidates,
+        )
+    return UNetCountModelPathStatus(
+        path=str(path),
+        exists=False,
+        ready=False,
+        is_colab_path=False,
+        message=f"U-Net checkpoint not found: {path}",
+        local_candidates=local_candidates,
+    )
+
+
+def inspect_uploaded_unet_count_model(model_pt_bytes: bytes | None, uploaded_name: str = "") -> UNetCountModelPathStatus:
+    display_name = uploaded_name or "uploaded model.pt"
+    if model_pt_bytes is None:
+        return UNetCountModelPathStatus(
+            path=display_name,
+            exists=False,
+            ready=False,
+            is_colab_path=False,
+            message="Upload a U-Net counting model checkpoint or provide a local path.",
+            local_candidates=(),
+        )
+    try:
+        load_unet_count_checkpoint(model_pt_bytes=model_pt_bytes)
+    except Exception as exc:
+        return UNetCountModelPathStatus(
+            path=display_name,
+            exists=False,
+            ready=False,
+            is_colab_path=False,
+            message=f"Uploaded U-Net checkpoint is invalid: {exc}",
+            local_candidates=(),
+        )
+    return UNetCountModelPathStatus(
+        path=display_name,
+        exists=True,
+        ready=True,
+        is_colab_path=False,
+        message=f"Uploaded U-Net checkpoint is ready: {display_name}",
+        local_candidates=(),
+    )
+
+
 def find_local_species_model_candidates(search_root: Path | None = None) -> tuple[str, ...]:
     if search_root is None or not search_root.exists():
         return ()
@@ -269,6 +405,21 @@ def find_local_species_model_candidates(search_root: Path | None = None) -> tupl
         except ValueError:
             relative_parts = [part.lower() for part in path.parts]
         if not any("species" in part for part in relative_parts[:-1]):
+            continue
+        candidates.append(str(path))
+    return tuple(sorted(candidates)[:8])
+
+
+def find_local_unet_count_model_candidates(search_root: Path | None = None) -> tuple[str, ...]:
+    if search_root is None or not search_root.exists():
+        return ()
+    candidates = []
+    for path in search_root.rglob("model.pt"):
+        try:
+            relative_parts = [part.lower() for part in path.relative_to(search_root).parts]
+        except ValueError:
+            relative_parts = [part.lower() for part in path.parts]
+        if "unet_count" not in "/".join(relative_parts):
             continue
         candidates.append(str(path))
     return tuple(sorted(candidates)[:8])
@@ -324,3 +475,60 @@ def mask_to_rgb(mask: np.ndarray) -> np.ndarray:
 
 def config_rows(config: dict[str, Any]) -> list[dict[str, str]]:
     return [{"Parameter": key, "Value": str(value)} for key, value in config.items()]
+
+
+def load_unet_count_checkpoint(model_pt_path: str = "", model_pt_bytes: bytes | None = None) -> dict[str, Any]:
+    try:
+        import torch
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("PyTorch is required for local U-Net inference. Install torch in the local environment before using this model family.") from exc
+    if model_pt_bytes is not None:
+        checkpoint = torch.load(io.BytesIO(model_pt_bytes), map_location="cpu")
+    else:
+        status = inspect_unet_count_model_path(model_pt_path)
+        if not status.ready:
+            raise FileNotFoundError(status.message)
+        checkpoint = torch.load(Path(status.path), map_location="cpu")
+    validate_unet_count_checkpoint(checkpoint)
+    return checkpoint
+
+
+def validate_unet_count_checkpoint(checkpoint: dict[str, Any]) -> None:
+    if not isinstance(checkpoint, dict):
+        raise ValueError("Checkpoint payload must be a dictionary.")
+    if "state_dict" not in checkpoint:
+        raise ValueError("Checkpoint is missing state_dict.")
+    model_type = str(checkpoint.get("model_type", ""))
+    if model_type and model_type != "unet_count_segmenter":
+        raise ValueError(f"Checkpoint model_type is not a U-Net counting model: {model_type}")
+
+
+def prepare_unet_count_image_tensor(image: np.ndarray, image_size: int):
+    try:
+        import torch
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("PyTorch is required for local U-Net inference. Install torch in the local environment before using this model family.") from exc
+    resized = cv2.resize(image, (image_size, image_size), interpolation=cv2.INTER_AREA)
+    rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    chw = np.transpose(rgb, (2, 0, 1))
+    return torch.from_numpy(chw).unsqueeze(0)
+
+
+def resize_binary_mask(mask: np.ndarray, target_shape: tuple[int, int]) -> np.ndarray:
+    return cv2.resize(mask, (target_shape[1], target_shape[0]), interpolation=cv2.INTER_NEAREST)
+
+
+def count_connected_components(mask: np.ndarray, min_component_area: int) -> int:
+    component_count, _, stats, _ = cv2.connectedComponentsWithStats((mask > 0).astype(np.uint8), connectivity=8)
+    count = 0
+    for index in range(1, component_count):
+        if int(stats[index, cv2.CC_STAT_AREA]) >= int(min_component_area):
+            count += 1
+    return count
+
+
+def render_segmentation_overlay(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    overlay = image.copy()
+    colored = np.zeros_like(overlay)
+    colored[:, :, 1] = mask
+    return cv2.addWeighted(overlay, 0.8, colored, 0.35, 0.0)

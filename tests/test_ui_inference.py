@@ -4,6 +4,12 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
+
+try:
+    import torch
+except ModuleNotFoundError:
+    torch = None
 
 from src.classical.species_classification import (
     SpeciesFeatureConfig,
@@ -14,14 +20,19 @@ from src.classical.species_classification import (
 from src.ui.inference import (
     CLASSICAL_COUNT_PRESETS,
     CLASSICAL_SPECIES_MODEL_PRESETS,
+    UNET_COUNT_MODEL_PRESETS,
     classify_with_classical_species_model,
     config_rows,
     count_with_classical_model,
+    count_with_unet_model,
     decode_uploaded_image,
     evaluate_empty_plate_gate,
     find_local_species_model_candidates,
+    find_local_unet_count_model_candidates,
     inspect_species_model_path,
+    inspect_unet_count_model_path,
     inspect_uploaded_species_model,
+    inspect_uploaded_unet_count_model,
 )
 
 
@@ -258,6 +269,87 @@ def test_inspect_uploaded_species_model_marks_invalid_upload_not_ready() -> None
 
     assert not status.ready
     assert "invalid" in status.message.lower()
+
+
+def test_unet_count_model_preset_points_to_locked_checkpoint() -> None:
+    assert UNET_COUNT_MODEL_PRESETS["Locked test best run"].endswith(
+        "outputs/unet_count/train_run_001/model.pt"
+    )
+
+
+def test_inspect_unet_count_model_path_marks_colab_path_unavailable() -> None:
+    status = inspect_unet_count_model_path(
+        "/content/drive/MyDrive/bacterial_colony_detection/outputs/unet_count/train_run_001/model.pt"
+    )
+
+    assert not status.ready
+    assert status.is_colab_path
+    assert "local Streamlit app cannot read that location" in status.message
+
+
+def test_inspect_unet_count_model_path_marks_existing_local_checkpoint_ready(tmp_path: Path) -> None:
+    model_path = tmp_path / "model.pt"
+    model_path.write_bytes(b"checkpoint")
+
+    status = inspect_unet_count_model_path(str(model_path), tmp_path)
+
+    assert status.ready
+    assert status.exists
+    assert status.path == str(model_path)
+
+
+def test_find_local_unet_count_model_candidates_filters_to_unet_count(tmp_path: Path) -> None:
+    wanted = tmp_path / "outputs" / "unet_count" / "train_run_001"
+    wanted.mkdir(parents=True, exist_ok=True)
+    unwanted = tmp_path / "outputs" / "classical_species"
+    unwanted.mkdir(parents=True, exist_ok=True)
+    (wanted / "model.pt").write_bytes(b"ok")
+    (unwanted / "model.pt").write_bytes(b"skip")
+
+    candidates = find_local_unet_count_model_candidates(tmp_path)
+
+    assert candidates == (str(wanted / "model.pt"),)
+
+
+def test_inspect_uploaded_unet_count_model_marks_invalid_upload_not_ready() -> None:
+    status = inspect_uploaded_unet_count_model(b"not a checkpoint", "broken.pt")
+
+    assert not status.ready
+    assert "invalid" in status.message.lower()
+
+
+def test_count_with_unet_model_accepts_uploaded_checkpoint_bytes() -> None:
+    if torch is None:
+        pytest.skip("torch is not installed in this environment")
+    from src.unet.torch_backend import UNetSegmenter
+
+    model = UNetSegmenter(base_channels=8)
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.zero_()
+        model.head.bias.fill_(10.0)
+    checkpoint = {
+        "model_type": "unet_count_segmenter",
+        "image_size": 64,
+        "base_channels": 8,
+        "state_dict": model.state_dict(),
+    }
+    import io
+
+    buffer = io.BytesIO()
+    torch.save(checkpoint, buffer)
+    image = np.full((96, 112, 3), 180, dtype=np.uint8)
+    result = count_with_unet_model(
+        image,
+        model_pt_bytes=buffer.getvalue(),
+        threshold=0.5,
+        min_component_area=2,
+    )
+
+    assert result.predicted_count == 1
+    assert result.overlay_bgr.shape == image.shape
+    assert result.mask.shape == image.shape[:2]
+    assert result.config["threshold"] == 0.5
 
 
 def test_find_local_species_model_candidates_filters_model_paths(tmp_path: Path) -> None:
