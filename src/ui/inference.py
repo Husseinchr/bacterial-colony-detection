@@ -25,7 +25,8 @@ class CountingInferenceResult:
 class ClassificationInferenceResult:
     predicted_class: str
     classifier_type: str
-    distance: float
+    score_name: str
+    score_value: float
     config: dict[str, Any]
     accepted: bool
     rejection_reason: str
@@ -56,7 +57,7 @@ class SpeciesModelPathStatus:
 
 
 @dataclass(frozen=True)
-class UNetCountModelPathStatus:
+class UNetModelPathStatus:
     path: str
     exists: bool
     ready: bool
@@ -104,6 +105,11 @@ CLASSICAL_SPECIES_MODEL_PRESETS = {
 
 UNET_COUNT_MODEL_PRESETS = {
     "Locked test best run": "/content/drive/MyDrive/bacterial_colony_detection/outputs/unet_count/train_run_001/model.pt",
+}
+
+
+UNET_SPECIES_MODEL_PRESETS = {
+    "Locked best checkpoint": "/content/drive/MyDrive/bacterial_colony_detection/outputs/unet_species_image/train_run_001/model.pt",
 }
 
 
@@ -173,7 +179,7 @@ def count_with_unet_model(
     model = UNetSegmenter(base_channels=base_channels)
     model.load_state_dict(checkpoint["state_dict"])
     model.eval()
-    image_tensor = prepare_unet_count_image_tensor(image, image_size)
+    image_tensor = prepare_unet_image_tensor(image, image_size)
     with torch.no_grad():
         logits = model(image_tensor)
         prob_mask = torch.sigmoid(logits)[0, 0].cpu().numpy()
@@ -224,8 +230,71 @@ def classify_with_classical_species_model(
     return ClassificationInferenceResult(
         predicted_class=predicted_class,
         classifier_type=model.classifier_type,
-        distance=float(distance),
+        score_name="Distance",
+        score_value=float(distance),
         config=model.config.to_dict(),
+        accepted=accepted,
+        rejection_reason=rejection_reason,
+        rejection_distance_threshold=None,
+    )
+
+
+def classify_with_unet_species_model(
+    image: np.ndarray,
+    model_pt_path: str = "",
+    model_pt_bytes: bytes | None = None,
+    reject_empty_unsupported: bool = False,
+) -> ClassificationInferenceResult:
+    try:
+        import torch
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("PyTorch is required for local U-Net inference. Install torch in the local environment before using this model family.") from exc
+
+    from src.classical.species_classification import SpeciesFeatureConfig
+    from src.unet.torch_backend import UNetEncoderClassifier
+
+    checkpoint = load_unet_species_checkpoint(model_pt_path=model_pt_path, model_pt_bytes=model_pt_bytes)
+    class_names = [str(name) for name in checkpoint["class_names"]]
+    image_size = int(checkpoint.get("image_size", 256))
+    base_channels = int(checkpoint.get("base_channels", 32))
+    dropout = float(checkpoint.get("dropout", 0.2))
+    model = UNetEncoderClassifier(
+        class_count=len(class_names),
+        base_channels=base_channels,
+        dropout=dropout,
+    )
+    model.load_state_dict(checkpoint["state_dict"])
+    model.eval()
+    image_tensor = prepare_unet_image_tensor(image, image_size)
+    with torch.no_grad():
+        logits = model(image_tensor)
+        probabilities = torch.softmax(logits, dim=1)[0].cpu().numpy()
+    predicted_index = int(np.argmax(probabilities))
+    predicted_class = class_names[predicted_index]
+    confidence = float(probabilities[predicted_index])
+    accepted = True
+    rejection_reason = ""
+    if reject_empty_unsupported:
+        empty_gate = evaluate_empty_plate_gate(
+            image,
+            extract_species_features(image, SpeciesFeatureConfig(image_size=image_size)),
+        )
+        if empty_gate.rejected:
+            accepted = False
+            predicted_class = "Empty / unsupported"
+            rejection_reason = empty_gate.reason
+    return ClassificationInferenceResult(
+        predicted_class=predicted_class,
+        classifier_type="unet_encoder_classifier",
+        score_name="Confidence",
+        score_value=confidence,
+        config={
+            "model_type": str(checkpoint.get("model_type", "unet_species_image_classifier")),
+            "image_size": image_size,
+            "base_channels": base_channels,
+            "dropout": dropout,
+            "class_names": ", ".join(class_names),
+        },
         accepted=accepted,
         rejection_reason=rejection_reason,
         rejection_distance_threshold=None,
@@ -317,32 +386,58 @@ def inspect_uploaded_species_model(model_json_bytes: bytes | None, uploaded_name
     )
 
 
-def inspect_unet_count_model_path(model_pt_path: str, search_root: Path | None = None) -> UNetCountModelPathStatus:
+def inspect_unet_count_model_path(model_pt_path: str, search_root: Path | None = None) -> UNetModelPathStatus:
+    return inspect_unet_model_path(
+        model_pt_path=model_pt_path,
+        search_root=search_root,
+        label="U-Net counting",
+        missing_message="Provide a local U-Net counting model .pt path.",
+        candidate_fn=find_local_unet_count_model_candidates,
+    )
+
+
+def inspect_unet_species_model_path(model_pt_path: str, search_root: Path | None = None) -> UNetModelPathStatus:
+    return inspect_unet_model_path(
+        model_pt_path=model_pt_path,
+        search_root=search_root,
+        label="U-Net species",
+        missing_message="Provide a local U-Net species model .pt path.",
+        candidate_fn=find_local_unet_species_model_candidates,
+    )
+
+
+def inspect_unet_model_path(
+    model_pt_path: str,
+    search_root: Path | None,
+    label: str,
+    missing_message: str,
+    candidate_fn,
+) -> UNetModelPathStatus:
     raw_path = model_pt_path.strip()
     if not raw_path:
-        return UNetCountModelPathStatus(
+        return UNetModelPathStatus(
             path="",
             exists=False,
             ready=False,
             is_colab_path=False,
-            message="Provide a local U-Net counting model .pt path.",
-            local_candidates=find_local_unet_count_model_candidates(search_root),
+            message=missing_message,
+            local_candidates=candidate_fn(search_root),
         )
     path = Path(raw_path)
     exists = path.exists()
     is_colab = raw_path.startswith("/content/")
-    local_candidates = find_local_unet_count_model_candidates(search_root)
+    local_candidates = candidate_fn(search_root)
     if exists:
-        return UNetCountModelPathStatus(
+        return UNetModelPathStatus(
             path=str(path),
             exists=True,
             ready=True,
             is_colab_path=is_colab,
-            message=f"Local U-Net checkpoint is ready: {path}",
+            message=f"Local {label} checkpoint is ready: {path}",
             local_candidates=local_candidates,
         )
     if is_colab:
-        return UNetCountModelPathStatus(
+        return UNetModelPathStatus(
             path=str(path),
             exists=False,
             ready=False,
@@ -353,31 +448,57 @@ def inspect_unet_count_model_path(model_pt_path: str, search_root: Path | None =
             ),
             local_candidates=local_candidates,
         )
-    return UNetCountModelPathStatus(
+    return UNetModelPathStatus(
         path=str(path),
         exists=False,
         ready=False,
         is_colab_path=False,
-        message=f"U-Net checkpoint not found: {path}",
+        message=f"{label} checkpoint not found: {path}",
         local_candidates=local_candidates,
     )
 
 
-def inspect_uploaded_unet_count_model(model_pt_bytes: bytes | None, uploaded_name: str = "") -> UNetCountModelPathStatus:
+def inspect_uploaded_unet_count_model(model_pt_bytes: bytes | None, uploaded_name: str = "") -> UNetModelPathStatus:
+    return inspect_uploaded_unet_model(
+        model_pt_bytes=model_pt_bytes,
+        uploaded_name=uploaded_name,
+        empty_message="Upload a U-Net counting model checkpoint or provide a local path.",
+        ready_label="Uploaded U-Net counting checkpoint is ready",
+        validator=load_unet_count_checkpoint,
+    )
+
+
+def inspect_uploaded_unet_species_model(model_pt_bytes: bytes | None, uploaded_name: str = "") -> UNetModelPathStatus:
+    return inspect_uploaded_unet_model(
+        model_pt_bytes=model_pt_bytes,
+        uploaded_name=uploaded_name,
+        empty_message="Upload a U-Net species model checkpoint or provide a local path.",
+        ready_label="Uploaded U-Net species checkpoint is ready",
+        validator=load_unet_species_checkpoint,
+    )
+
+
+def inspect_uploaded_unet_model(
+    model_pt_bytes: bytes | None,
+    uploaded_name: str,
+    empty_message: str,
+    ready_label: str,
+    validator,
+) -> UNetModelPathStatus:
     display_name = uploaded_name or "uploaded model.pt"
     if model_pt_bytes is None:
-        return UNetCountModelPathStatus(
+        return UNetModelPathStatus(
             path=display_name,
             exists=False,
             ready=False,
             is_colab_path=False,
-            message="Upload a U-Net counting model checkpoint or provide a local path.",
+            message=empty_message,
             local_candidates=(),
         )
     try:
-        load_unet_count_checkpoint(model_pt_bytes=model_pt_bytes)
+        validator(model_pt_bytes=model_pt_bytes)
     except Exception as exc:
-        return UNetCountModelPathStatus(
+        return UNetModelPathStatus(
             path=display_name,
             exists=False,
             ready=False,
@@ -385,12 +506,12 @@ def inspect_uploaded_unet_count_model(model_pt_bytes: bytes | None, uploaded_nam
             message=f"Uploaded U-Net checkpoint is invalid: {exc}",
             local_candidates=(),
         )
-    return UNetCountModelPathStatus(
+    return UNetModelPathStatus(
         path=display_name,
         exists=True,
         ready=True,
         is_colab_path=False,
-        message=f"Uploaded U-Net checkpoint is ready: {display_name}",
+        message=f"{ready_label}: {display_name}",
         local_candidates=(),
     )
 
@@ -420,6 +541,21 @@ def find_local_unet_count_model_candidates(search_root: Path | None = None) -> t
         except ValueError:
             relative_parts = [part.lower() for part in path.parts]
         if "unet_count" not in "/".join(relative_parts):
+            continue
+        candidates.append(str(path))
+    return tuple(sorted(candidates)[:8])
+
+
+def find_local_unet_species_model_candidates(search_root: Path | None = None) -> tuple[str, ...]:
+    if search_root is None or not search_root.exists():
+        return ()
+    candidates = []
+    for path in search_root.rglob("model.pt"):
+        try:
+            relative_parts = [part.lower() for part in path.relative_to(search_root).parts]
+        except ValueError:
+            relative_parts = [part.lower() for part in path.parts]
+        if "unet_species" not in "/".join(relative_parts):
             continue
         candidates.append(str(path))
     return tuple(sorted(candidates)[:8])
@@ -493,6 +629,22 @@ def load_unet_count_checkpoint(model_pt_path: str = "", model_pt_bytes: bytes | 
     return checkpoint
 
 
+def load_unet_species_checkpoint(model_pt_path: str = "", model_pt_bytes: bytes | None = None) -> dict[str, Any]:
+    try:
+        import torch
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("PyTorch is required for local U-Net inference. Install torch in the local environment before using this model family.") from exc
+    if model_pt_bytes is not None:
+        checkpoint = torch.load(io.BytesIO(model_pt_bytes), map_location="cpu")
+    else:
+        status = inspect_unet_species_model_path(model_pt_path)
+        if not status.ready:
+            raise FileNotFoundError(status.message)
+        checkpoint = torch.load(Path(status.path), map_location="cpu")
+    validate_unet_species_checkpoint(checkpoint)
+    return checkpoint
+
+
 def validate_unet_count_checkpoint(checkpoint: dict[str, Any]) -> None:
     if not isinstance(checkpoint, dict):
         raise ValueError("Checkpoint payload must be a dictionary.")
@@ -503,7 +655,19 @@ def validate_unet_count_checkpoint(checkpoint: dict[str, Any]) -> None:
         raise ValueError(f"Checkpoint model_type is not a U-Net counting model: {model_type}")
 
 
-def prepare_unet_count_image_tensor(image: np.ndarray, image_size: int):
+def validate_unet_species_checkpoint(checkpoint: dict[str, Any]) -> None:
+    if not isinstance(checkpoint, dict):
+        raise ValueError("Checkpoint payload must be a dictionary.")
+    if "state_dict" not in checkpoint:
+        raise ValueError("Checkpoint is missing state_dict.")
+    if "class_names" not in checkpoint:
+        raise ValueError("Checkpoint is missing class_names.")
+    model_type = str(checkpoint.get("model_type", ""))
+    if model_type and model_type != "unet_species_image_classifier":
+        raise ValueError(f"Checkpoint model_type is not a U-Net species model: {model_type}")
+
+
+def prepare_unet_image_tensor(image: np.ndarray, image_size: int):
     try:
         import torch
     except ModuleNotFoundError as exc:
