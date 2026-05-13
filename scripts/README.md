@@ -28,6 +28,7 @@ Classical computer-vision model evaluation and tuning entrypoints.
 - `prepare_unet_count_agar.py` converts AGAR detection/counting splits into pseudo-mask manifests for U-Net segmentation.
 - `train_unet_count_agar.py` trains a U-Net segmentation model for colony-mask prediction on prepared pseudo masks.
 - `evaluate_unet_count_agar.py` evaluates a saved U-Net counting segmenter on a prepared manifest and derives count metrics from connected components.
+- `sweep_unet_count_postprocess_agar.py` tunes U-Net counting postprocessing on a saved checkpoint by sweeping segmentation threshold and minimum connected-component area on a validation manifest.
 - `train_unet_species_image_agar.py` trains a U-Net encoder image-level species classifier on `species_image` splits.
 - `evaluate_unet_species_image_agar.py` evaluates a saved U-Net image-level species classifier.
 
