@@ -107,9 +107,10 @@ def main() -> None:
                 )
                 if overlay_dir is not None and sample_index < args.overlay_limit:
                     source_image = read_image(args.dataset_dir / image_relative)
-                    overlay = render_segmentation_overlay(source_image, pred_mask)
+                    resized_mask = resize_mask_to_image(pred_mask, source_image)
+                    overlay = render_segmentation_overlay(source_image, resized_mask)
                     cv2.imwrite(str(overlay_dir / safe_output_name(image_relative, ".jpg")), overlay)
-                    cv2.imwrite(str(overlay_dir / safe_output_name(image_relative, "_mask.png")), pred_mask)
+                    cv2.imwrite(str(overlay_dir / safe_output_name(image_relative, "_mask.png")), resized_mask)
                 sample_index += 1
     count_metrics = evaluate_count_predictions(predictions, None)
     segmentation_frame = pd.DataFrame(segmentation_rows)
@@ -143,6 +144,10 @@ def render_segmentation_overlay(image: np.ndarray, mask: np.ndarray) -> np.ndarr
     colored = np.zeros_like(overlay)
     colored[:, :, 1] = mask
     return cv2.addWeighted(overlay, 0.8, colored, 0.35, 0.0)
+
+
+def resize_mask_to_image(mask: np.ndarray, image: np.ndarray) -> np.ndarray:
+    return cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
 
 
 def safe_output_name(path: str, suffix: str) -> str:
