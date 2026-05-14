@@ -9,7 +9,7 @@ import pandas as pd
 
 from scripts.yolo.train_yolo_agar import resolve_resume_checkpoint
 from src.yolo.count_eval import build_count_predictions, build_threshold_sweep
-from src.yolo.export import export_agar_to_yolo
+from src.yolo.export import export_agar_to_yolo, load_row_labels, run_with_io_retry
 
 
 def write_sample(
@@ -236,3 +236,48 @@ def test_resolve_resume_checkpoint_uses_explicit_path_when_provided(tmp_path: Pa
     resolved = resolve_resume_checkpoint(tmp_path / "run", resume=False, resume_from=str(checkpoint))
 
     assert resolved == checkpoint
+
+
+def test_run_with_io_retry_recovers_from_transient_abort(tmp_path: Path) -> None:
+    state = {"calls": 0}
+
+    def flaky():
+        state["calls"] += 1
+        if state["calls"] == 1:
+            raise ConnectionAbortedError("temporary drive failure")
+        return "ok"
+
+    result = run_with_io_retry(flaky, tmp_path / "x.json", attempts=2, delay_seconds=0.0)
+
+    assert result == "ok"
+    assert state["calls"] == 2
+
+
+def test_load_row_labels_retries_transient_exists_failure(tmp_path: Path, monkeypatch) -> None:
+    image_path, json_path = write_sample(
+        tmp_path,
+        "countable",
+        1000,
+        "A",
+        1,
+        [{"class": "A", "x": 5, "y": 6, "width": 8, "height": 9}],
+    )
+    row = {
+        "image_path": str(image_path.relative_to(tmp_path)),
+        "json_path": str(json_path.relative_to(tmp_path)),
+    }
+    state = {"calls": 0}
+    original_exists = Path.exists
+
+    def flaky_exists(self):
+        if self == json_path:
+            state["calls"] += 1
+            if state["calls"] == 1:
+                raise ConnectionAbortedError("temporary drive failure")
+        return original_exists(self)
+
+    monkeypatch.setattr(Path, "exists", flaky_exists)
+    labels = load_row_labels(tmp_path, row)
+
+    assert len(labels) == 1
+    assert labels[0]["class"] == "A"

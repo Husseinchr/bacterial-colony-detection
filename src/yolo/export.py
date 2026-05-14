@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -13,6 +14,7 @@ from src.datasets.agar import load_agar_annotation
 
 YOLO_TASKS = ("count", "species")
 IMAGE_COPY_MODES = ("copy", "symlink")
+RETRYABLE_IO_EXCEPTIONS = (ConnectionAbortedError, OSError)
 
 
 def export_agar_to_yolo(
@@ -165,7 +167,7 @@ def resolve_image_size(row: dict, image_path: Path) -> tuple[int, int]:
     height = int(row.get("image_height") or 0)
     if width > 0 and height > 0:
         return width, height
-    image = read_image(image_path)
+    image = run_with_io_retry(lambda: read_image(image_path), image_path)
     return int(image.shape[1]), int(image.shape[0])
 
 
@@ -250,9 +252,10 @@ def load_row_labels(dataset_dir: Path, row: dict) -> list[dict]:
     if not json_relative:
         return []
     json_path = dataset_dir / json_relative
-    if not json_path.exists():
+    exists = run_with_io_retry(lambda: json_path.exists(), json_path)
+    if not exists:
         return []
-    payload = load_agar_annotation(json_path)
+    payload = run_with_io_retry(lambda: load_agar_annotation(json_path), json_path)
     labels = payload.get("labels", [])
     return labels if isinstance(labels, list) else []
 
@@ -278,7 +281,7 @@ def transfer_image(source: Path, target: Path, image_copy_mode: str) -> None:
     if target.exists() or target.is_symlink():
         target.unlink()
     if image_copy_mode == "copy":
-        shutil.copy2(source, target)
+        run_with_io_retry(lambda: shutil.copy2(source, target), source)
         return
     target.symlink_to(source.resolve())
 
@@ -299,3 +302,16 @@ def write_dataset_metadata(output_dir: Path, class_names: list[str]) -> None:
 
 def is_truthy(value) -> bool:
     return str(value).strip().lower() in {"true", "1", "yes"}
+
+
+def run_with_io_retry(action, path: Path, attempts: int = 4, delay_seconds: float = 1.0):
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            return action()
+        except RETRYABLE_IO_EXCEPTIONS as exc:
+            last_error = exc
+            if attempt == attempts - 1:
+                break
+            time.sleep(delay_seconds * (attempt + 1))
+    raise RuntimeError(f"Repeated I/O failure while accessing {path}: {last_error}") from last_error
