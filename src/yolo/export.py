@@ -40,6 +40,7 @@ def export_agar_to_yolo(
         "task": active_task,
         "image_copy_mode": active_copy_mode,
         "class_names": class_names,
+        "allowed_label_classes": class_names if active_task == "species" else [],
         "splits": {},
     }
     for split_name, split_csv in split_paths.items():
@@ -86,9 +87,6 @@ def resolve_class_names(
     for split_name, split_csv in split_paths.items():
         split_df = load_export_split(split_csv, task, max_images=split_limits[split_name])
         for row in split_df.to_dict("records"):
-            label_classes = extract_label_classes(dataset_dir, row)
-            if label_classes:
-                class_names.update(label_classes)
             primary_class = str(row.get("primary_class", "")).strip()
             if primary_class:
                 class_names.add(primary_class)
@@ -131,6 +129,7 @@ def export_split(
     negative_image_count = 0
     invalid_box_count = 0
     missing_annotation_count = 0
+    skipped_non_target_count = 0
     for row in split_df.to_dict("records"):
         image_relative = str(row["image_path"])
         image_source = dataset_dir / image_relative
@@ -151,6 +150,7 @@ def export_split(
         object_count += line_summary["object_count"]
         invalid_box_count += line_summary["invalid_box_count"]
         missing_annotation_count += line_summary["missing_annotation_count"]
+        skipped_non_target_count += line_summary["skipped_non_target_count"]
         if not label_lines:
             negative_image_count += 1
     return {
@@ -159,6 +159,7 @@ def export_split(
         "negative_image_count": negative_image_count,
         "invalid_box_count": invalid_box_count,
         "missing_annotation_count": missing_annotation_count,
+        "skipped_non_target_count": skipped_non_target_count,
     }
 
 
@@ -179,7 +180,7 @@ def build_label_lines(
     image_width: int,
     image_height: int,
 ) -> tuple[list[str], dict[str, int]]:
-    summary = {"object_count": 0, "invalid_box_count": 0, "missing_annotation_count": 0}
+    summary = {"object_count": 0, "invalid_box_count": 0, "missing_annotation_count": 0, "skipped_non_target_count": 0}
     labels = load_row_labels(dataset_dir, row)
     if not labels and str(row.get("json_path", "")).strip():
         summary["missing_annotation_count"] = 0
@@ -194,7 +195,10 @@ def build_label_lines(
             summary["invalid_box_count"] += 1
             continue
         if class_name not in class_to_index:
-            summary["invalid_box_count"] += 1
+            if task == "species":
+                summary["skipped_non_target_count"] += 1
+            else:
+                summary["invalid_box_count"] += 1
             continue
         box_values = normalize_yolo_box(label, image_width, image_height)
         if box_values is None:

@@ -153,6 +153,51 @@ def test_export_agar_to_yolo_species_uses_multiclass_labels(tmp_path: Path) -> N
     assert summary["class_names"] == ["A", "B"]
     label_lines = (tmp_path / "yolo_species" / "labels" / "train" / "data__countable__1.txt").read_text(encoding="utf-8")
     assert label_lines.startswith("1 ")
+    assert summary["class_names"] == ["A", "B"]
+
+
+def test_export_agar_to_yolo_species_skips_non_target_box_labels(tmp_path: Path) -> None:
+    image_path, json_path = write_sample(
+        tmp_path,
+        "countable",
+        1,
+        "A",
+        3,
+        [
+            {"class": "A", "x": 5, "y": 8, "width": 10, "height": 12},
+            {"class": "Contamination", "x": 20, "y": 8, "width": 8, "height": 8},
+            {"class": "Defect", "x": 32, "y": 10, "width": 7, "height": 7},
+        ],
+    )
+    rows = [
+        {
+            "image_path": str(image_path.relative_to(tmp_path)),
+            "json_path": str(json_path.relative_to(tmp_path)),
+            "category": "countable",
+            "primary_class": "A",
+            "colonies_number": 3,
+            "label_count": 3,
+            "image_width": 50,
+            "image_height": 40,
+        }
+    ]
+    split_csv = write_split(tmp_path, rows, "train")
+
+    summary = export_agar_to_yolo(
+        dataset_dir=tmp_path,
+        train_csv=split_csv,
+        val_csv=split_csv,
+        test_csv=split_csv,
+        output_dir=tmp_path / "yolo_species_filtered",
+        task="species",
+    )
+
+    label_lines = (tmp_path / "yolo_species_filtered" / "labels" / "train" / "data__countable__1.txt").read_text(encoding="utf-8").strip().splitlines()
+    assert summary["class_names"] == ["A"]
+    assert summary["splits"]["train"]["object_count"] == 1
+    assert summary["splits"]["train"]["skipped_non_target_count"] == 2
+    assert len(label_lines) == 1
+    assert label_lines[0].startswith("0 ")
 
 
 def test_export_agar_to_yolo_skips_invalid_boxes_and_records_them(tmp_path: Path) -> None:
