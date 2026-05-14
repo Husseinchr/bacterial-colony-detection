@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 import pandas as pd
 
+from scripts.yolo.train_yolo_agar import resolve_resume_checkpoint
 from src.yolo.count_eval import build_count_predictions, build_threshold_sweep
 from src.yolo.export import export_agar_to_yolo
 
@@ -216,3 +217,22 @@ def test_build_count_predictions_and_threshold_sweep_follow_confidence_threshold
     assert best_predictions[0].predicted_count == 2
     assert float(sweep_df.iloc[0]["confidence_threshold"]) == 0.5
     assert set(float(value) for value in sweep_df["confidence_threshold"]) == {0.2, 0.5, 0.8}
+
+
+def test_resolve_resume_checkpoint_uses_output_dir_last_pt_when_requested(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "run" / "weights" / "last.pt"
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint.write_bytes(b"checkpoint")
+
+    resolved = resolve_resume_checkpoint(tmp_path / "run", resume=True, resume_from="")
+
+    assert resolved == checkpoint
+
+
+def test_resolve_resume_checkpoint_uses_explicit_path_when_provided(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "manual_last.pt"
+    checkpoint.write_bytes(b"checkpoint")
+
+    resolved = resolve_resume_checkpoint(tmp_path / "run", resume=False, resume_from=str(checkpoint))
+
+    assert resolved == checkpoint

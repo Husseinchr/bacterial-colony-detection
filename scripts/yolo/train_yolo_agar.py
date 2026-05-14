@@ -27,6 +27,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--weight-decay", default=0.0005, type=float)
     parser.add_argument("--close-mosaic", default=10, type=int)
     parser.add_argument("--cache", default="False", type=str)
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--resume-from", default="", type=str)
     return parser.parse_args()
 
 
@@ -38,6 +40,7 @@ def main() -> None:
 
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    resume_checkpoint = resolve_resume_checkpoint(args.output_dir, args.resume, args.resume_from)
     run_kwargs = {
         "data": str(args.data_yaml),
         "epochs": int(args.epochs),
@@ -57,7 +60,11 @@ def main() -> None:
     }
     if str(args.device).strip():
         run_kwargs["device"] = str(args.device).strip()
-    model = YOLO(args.model)
+    if resume_checkpoint is not None:
+        model = YOLO(str(resume_checkpoint))
+        run_kwargs["resume"] = True
+    else:
+        model = YOLO(args.model)
     model.train(**run_kwargs)
     config_path = args.output_dir / "train_config.json"
     with config_path.open("w", encoding="utf-8") as f:
@@ -66,6 +73,7 @@ def main() -> None:
     last_weights = args.output_dir / "weights" / "last.pt"
     print("AGAR YOLO training summary")
     print(f"output_dir: {args.output_dir}")
+    print(f"resume_checkpoint: {resume_checkpoint if resume_checkpoint is not None else 'none'}")
     print(f"best_weights: {best_weights}")
     print(f"last_weights: {last_weights}")
     print(f"Saved training config to: {config_path}")
@@ -78,6 +86,21 @@ def parse_cache_flag(value: str) -> bool | str:
     if raw in {"false", "0", "no"}:
         return False
     return value
+
+
+def resolve_resume_checkpoint(output_dir: Path, resume: bool, resume_from: str) -> Path | None:
+    explicit = str(resume_from).strip()
+    if explicit:
+        explicit_path = Path(explicit)
+        if not explicit_path.exists():
+            raise FileNotFoundError(f"Resume checkpoint not found: {explicit_path}")
+        return explicit_path
+    if not resume:
+        return None
+    auto_checkpoint = output_dir / "weights" / "last.pt"
+    if not auto_checkpoint.exists():
+        raise FileNotFoundError(f"Could not auto-resume because checkpoint does not exist: {auto_checkpoint}")
+    return auto_checkpoint
 
 
 if __name__ == "__main__":
