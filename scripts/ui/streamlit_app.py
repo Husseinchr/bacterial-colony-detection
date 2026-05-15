@@ -15,18 +15,27 @@ from src.ui.inference import (
     CLASSICAL_SPECIES_MODEL_PRESETS,
     UNET_COUNT_MODEL_PRESETS,
     UNET_SPECIES_MODEL_PRESETS,
+    YOLO_COUNT_MODEL_PRESETS,
+    YOLO_SPECIES_MODEL_PRESETS,
     bgr_to_rgb,
     classify_with_classical_species_model,
+    classify_with_yolo_species_model,
     classify_with_unet_species_model,
     config_rows,
     count_with_classical_model,
+    count_with_yolo_model,
     count_with_unet_model,
+    detection_rows,
     inspect_species_model_path,
     inspect_unet_count_model_path,
     inspect_unet_species_model_path,
     inspect_uploaded_species_model,
     inspect_uploaded_unet_count_model,
     inspect_uploaded_unet_species_model,
+    inspect_uploaded_yolo_count_model,
+    inspect_uploaded_yolo_species_model,
+    inspect_yolo_count_model_path,
+    inspect_yolo_species_model_path,
     load_image_input,
     mask_to_rgb,
 )
@@ -226,6 +235,14 @@ def main() -> None:
         render_unet_classification(image, source_name)
         return
 
+    if model_family == "YOLO" and task == "Counting":
+        render_yolo_counting(image, source_name)
+        return
+
+    if model_family == "YOLO" and task == "Classification":
+        render_yolo_classification(image, source_name)
+        return
+
     if model_family != "Classical":
         render_unavailable_family(task, model_family, image, source_name)
         return
@@ -250,6 +267,8 @@ def render_sidebar():
 def render_header(task: str, model_family: str) -> None:
     statuses = (
         ("Active task", task, model_family),
+        ("YOLO count", "Locked", "test MAE 1.11"),
+        ("YOLO species", "Locked", "test mAP50-95 0.694"),
         ("Classical count", "Locked", "test MAE 33.53"),
         ("Classical species", "Locked", "test F1 0.6036"),
         ("U-Net count", "Locked", "test MAE 11.33"),
@@ -269,7 +288,7 @@ def render_header(task: str, model_family: str) -> None:
         f"""
         <div class="app-shell">
             <div class="app-title">Bacterial Colony Model Tester</div>
-            <div class="phase-line">Single-image workbench for the AGAR-primary locked classical and U-Net baselines.</div>
+            <div class="phase-line">Single-image workbench for the AGAR-primary locked classical, YOLO, and U-Net models.</div>
             <div class="status-grid">{cards}</div>
         </div>
         """,
@@ -525,6 +544,152 @@ def render_unet_classification(image, source_name: str) -> None:
             if not result.accepted:
                 st.warning(result.rejection_reason)
             st.caption(f"Image source: {source_name}")
+            render_config_table(result.config)
+
+
+def render_yolo_counting(image, source_name: str) -> None:
+    control_col, result_col = st.columns([0.9, 1.35])
+    with control_col:
+        with st.container(border=True):
+            st.subheader("YOLO Counting")
+            preset_names = list(YOLO_COUNT_MODEL_PRESETS.keys()) + ["Manual path"]
+            preset_name = st.selectbox("YOLO checkpoint", options=preset_names, key="yolo_count_model_preset")
+            preset_path = YOLO_COUNT_MODEL_PRESETS.get(preset_name, "")
+            current_preset_state = st.session_state.get("yolo_count_model_preset_previous")
+            if current_preset_state != preset_name:
+                if preset_name != "Manual path":
+                    st.session_state["yolo_count_model_pt_path"] = preset_path
+                elif "yolo_count_model_pt_path" not in st.session_state:
+                    st.session_state["yolo_count_model_pt_path"] = ""
+                st.session_state["yolo_count_model_preset_previous"] = preset_name
+            uploaded_model_file = st.file_uploader("Model checkpoint upload", type=["pt"], key="yolo_count_model_pt_upload")
+            model_pt_path = st.text_input("Model checkpoint path", key="yolo_count_model_pt_path")
+            uploaded_model_bytes = uploaded_model_file.getvalue() if uploaded_model_file is not None else None
+            uploaded_model_name = uploaded_model_file.name if uploaded_model_file is not None else ""
+            upload_status = inspect_uploaded_yolo_count_model(uploaded_model_bytes, uploaded_model_name)
+            path_status = inspect_yolo_count_model_path(model_pt_path, ROOT)
+            confidence_threshold = st.number_input("Confidence threshold", min_value=0.05, max_value=0.95, value=0.45, step=0.05)
+            image_size = st.number_input("Inference image size", min_value=640, max_value=2048, value=1536, step=64)
+            render_unet_model_source_status(
+                upload_status,
+                path_status,
+                empty_message="Upload a YOLO counting model checkpoint or provide a local path.",
+                candidate_label="Detected local YOLO counting checkpoint candidates:",
+            )
+            run = st.button(
+                "Run YOLO counting",
+                type="primary",
+                use_container_width=True,
+                disabled=(not upload_status.ready and not path_status.ready) or image is None,
+            )
+            st.caption("Locked test configuration uses confidence threshold 0.45. Uploaded checkpoint overrides the path field.")
+    with result_col:
+        render_input_panel(image, source_name)
+        with st.container(border=True):
+            st.markdown('<div class="result-title">Counting Result</div>', unsafe_allow_html=True)
+            if not run:
+                st.markdown('<div class="result-muted">No YOLO counting run in this session.</div>', unsafe_allow_html=True)
+                return
+            if image is None:
+                st.error("Provide an image before running counting.")
+                return
+            try:
+                result = count_with_yolo_model(
+                    image=image,
+                    model_pt_path=model_pt_path,
+                    model_pt_bytes=uploaded_model_bytes,
+                    confidence_threshold=float(confidence_threshold),
+                    image_size=int(image_size),
+                )
+            except Exception as exc:
+                st.error(str(exc))
+                return
+            metric_a, metric_b, metric_c = st.columns(3)
+            metric_a.metric("Predicted count", result.predicted_count)
+            metric_b.metric("Detections kept", len(result.detections))
+            metric_c.metric("Image source", source_name)
+            st.image(bgr_to_rgb(result.overlay_bgr), caption="Detection overlay", use_container_width=True)
+            if result.detections:
+                st.dataframe(pd.DataFrame(detection_rows(result.detections)), use_container_width=True, hide_index=True)
+            else:
+                st.info("No detections passed the selected confidence threshold.")
+            render_config_table(result.config)
+
+
+def render_yolo_classification(image, source_name: str) -> None:
+    control_col, result_col = st.columns([0.9, 1.35])
+    with control_col:
+        with st.container(border=True):
+            st.subheader("YOLO Classification")
+            preset_names = list(YOLO_SPECIES_MODEL_PRESETS.keys()) + ["Manual path"]
+            preset_name = st.selectbox("YOLO checkpoint", options=preset_names, key="yolo_species_model_preset")
+            preset_path = YOLO_SPECIES_MODEL_PRESETS.get(preset_name, "")
+            current_preset_state = st.session_state.get("yolo_species_model_preset_previous")
+            if current_preset_state != preset_name:
+                if preset_name != "Manual path":
+                    st.session_state["yolo_species_model_pt_path"] = preset_path
+                elif "yolo_species_model_pt_path" not in st.session_state:
+                    st.session_state["yolo_species_model_pt_path"] = ""
+                st.session_state["yolo_species_model_preset_previous"] = preset_name
+            uploaded_model_file = st.file_uploader("Model checkpoint upload", type=["pt"], key="yolo_species_model_pt_upload")
+            model_pt_path = st.text_input("Model checkpoint path", key="yolo_species_model_pt_path")
+            uploaded_model_bytes = uploaded_model_file.getvalue() if uploaded_model_file is not None else None
+            uploaded_model_name = uploaded_model_file.name if uploaded_model_file is not None else ""
+            upload_status = inspect_uploaded_yolo_species_model(uploaded_model_bytes, uploaded_model_name)
+            path_status = inspect_yolo_species_model_path(model_pt_path, ROOT)
+            confidence_threshold = st.number_input("Confidence threshold", min_value=0.05, max_value=0.95, value=0.25, step=0.05, key="yolo_species_conf_threshold")
+            image_size = st.number_input("Inference image size", min_value=640, max_value=2048, value=1536, step=64, key="yolo_species_image_size")
+            render_unet_model_source_status(
+                upload_status,
+                path_status,
+                empty_message="Upload a YOLO species model checkpoint or provide a local path.",
+                candidate_label="Detected local YOLO species checkpoint candidates:",
+            )
+            run = st.button(
+                "Run YOLO classification",
+                type="primary",
+                use_container_width=True,
+                disabled=(not upload_status.ready and not path_status.ready) or image is None,
+            )
+            st.caption("This is the locked object-level species detector for countable plates, not the image-level species classifier used for uncountable plates.")
+    with result_col:
+        render_input_panel(image, source_name)
+        with st.container(border=True):
+            st.markdown('<div class="result-title">Classification Result</div>', unsafe_allow_html=True)
+            if not run:
+                st.markdown('<div class="result-muted">No YOLO classification run in this session.</div>', unsafe_allow_html=True)
+                return
+            if image is None:
+                st.error("Provide an image before running classification.")
+                return
+            try:
+                result = classify_with_yolo_species_model(
+                    image=image,
+                    model_pt_path=model_pt_path,
+                    model_pt_bytes=uploaded_model_bytes,
+                    confidence_threshold=float(confidence_threshold),
+                    image_size=int(image_size),
+                )
+            except Exception as exc:
+                st.error(str(exc))
+                return
+            metric_a, metric_b, metric_c = st.columns(3)
+            metric_a.metric("Detected colonies", result.total_detections)
+            metric_b.metric("Species classes", len(result.class_counts))
+            metric_c.metric("Image source", source_name)
+            st.image(bgr_to_rgb(result.overlay_bgr), caption="Species detection overlay", use_container_width=True)
+            if result.class_counts:
+                st.dataframe(
+                    pd.DataFrame(
+                        [{"Species": name, "Detections": count} for name, count in result.class_counts.items()]
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.info("No species detections passed the selected confidence threshold.")
+            if result.detections:
+                st.dataframe(pd.DataFrame(detection_rows(result.detections)), use_container_width=True, hide_index=True)
             render_config_table(result.config)
 
 

@@ -22,22 +22,33 @@ from src.ui.inference import (
     CLASSICAL_SPECIES_MODEL_PRESETS,
     UNET_COUNT_MODEL_PRESETS,
     UNET_SPECIES_MODEL_PRESETS,
+    YOLO_COUNT_MODEL_PRESETS,
+    YOLO_SPECIES_MODEL_PRESETS,
     classify_with_classical_species_model,
     classify_with_unet_species_model,
+    classify_with_yolo_species_model,
     config_rows,
     count_with_classical_model,
     count_with_unet_model,
+    count_with_yolo_model,
+    detection_rows,
     decode_uploaded_image,
     evaluate_empty_plate_gate,
     find_local_species_model_candidates,
     find_local_unet_count_model_candidates,
     find_local_unet_species_model_candidates,
+    find_local_yolo_count_model_candidates,
+    find_local_yolo_species_model_candidates,
     inspect_species_model_path,
     inspect_unet_count_model_path,
     inspect_unet_species_model_path,
     inspect_uploaded_species_model,
     inspect_uploaded_unet_count_model,
     inspect_uploaded_unet_species_model,
+    inspect_uploaded_yolo_count_model,
+    inspect_uploaded_yolo_species_model,
+    inspect_yolo_count_model_path,
+    inspect_yolo_species_model_path,
 )
 
 
@@ -290,6 +301,18 @@ def test_unet_species_model_preset_points_to_locked_checkpoint() -> None:
     )
 
 
+def test_yolo_count_model_preset_points_to_locked_checkpoint() -> None:
+    assert YOLO_COUNT_MODEL_PRESETS["Locked best checkpoint"].endswith(
+        "outputs/yolo_count/train_run_001/weights/best.pt"
+    )
+
+
+def test_yolo_species_model_preset_points_to_locked_checkpoint() -> None:
+    assert YOLO_SPECIES_MODEL_PRESETS["Locked best checkpoint"].endswith(
+        "outputs/yolo_species/train_run_001/weights/best.pt"
+    )
+
+
 def test_inspect_unet_count_model_path_marks_colab_path_unavailable() -> None:
     status = inspect_unet_count_model_path(
         "/content/drive/MyDrive/bacterial_colony_detection/outputs/unet_count/train_run_001/model.pt"
@@ -303,6 +326,26 @@ def test_inspect_unet_count_model_path_marks_colab_path_unavailable() -> None:
 def test_inspect_unet_species_model_path_marks_colab_path_unavailable() -> None:
     status = inspect_unet_species_model_path(
         "/content/drive/MyDrive/bacterial_colony_detection/outputs/unet_species_image/train_run_001/model.pt"
+    )
+
+    assert not status.ready
+    assert status.is_colab_path
+    assert "local Streamlit app cannot read that location" in status.message
+
+
+def test_inspect_yolo_count_model_path_marks_colab_path_unavailable() -> None:
+    status = inspect_yolo_count_model_path(
+        "/content/drive/MyDrive/bacterial_colony_detection/outputs/yolo_count/train_run_001/weights/best.pt"
+    )
+
+    assert not status.ready
+    assert status.is_colab_path
+    assert "local Streamlit app cannot read that location" in status.message
+
+
+def test_inspect_yolo_species_model_path_marks_colab_path_unavailable() -> None:
+    status = inspect_yolo_species_model_path(
+        "/content/drive/MyDrive/bacterial_colony_detection/outputs/yolo_species/train_run_001/weights/best.pt"
     )
 
     assert not status.ready
@@ -358,6 +401,32 @@ def test_find_local_unet_species_model_candidates_filters_to_unet_species(tmp_pa
     assert candidates == (str(wanted / "model.pt"),)
 
 
+def test_find_local_yolo_count_model_candidates_filters_to_yolo_count(tmp_path: Path) -> None:
+    wanted = tmp_path / "outputs" / "yolo_count" / "train_run_001" / "weights"
+    wanted.mkdir(parents=True, exist_ok=True)
+    unwanted = tmp_path / "outputs" / "unet_count"
+    unwanted.mkdir(parents=True, exist_ok=True)
+    (wanted / "best.pt").write_bytes(b"ok")
+    (unwanted / "model.pt").write_bytes(b"skip")
+
+    candidates = find_local_yolo_count_model_candidates(tmp_path)
+
+    assert candidates == (str(wanted / "best.pt"),)
+
+
+def test_find_local_yolo_species_model_candidates_filters_to_yolo_species(tmp_path: Path) -> None:
+    wanted = tmp_path / "outputs" / "yolo_species" / "train_run_001" / "weights"
+    wanted.mkdir(parents=True, exist_ok=True)
+    unwanted = tmp_path / "outputs" / "unet_species_image"
+    unwanted.mkdir(parents=True, exist_ok=True)
+    (wanted / "best.pt").write_bytes(b"ok")
+    (unwanted / "model.pt").write_bytes(b"skip")
+
+    candidates = find_local_yolo_species_model_candidates(tmp_path)
+
+    assert candidates == (str(wanted / "best.pt"),)
+
+
 def test_inspect_uploaded_unet_count_model_marks_invalid_upload_not_ready() -> None:
     status = inspect_uploaded_unet_count_model(b"not a checkpoint", "broken.pt")
 
@@ -367,6 +436,30 @@ def test_inspect_uploaded_unet_count_model_marks_invalid_upload_not_ready() -> N
 
 def test_inspect_uploaded_unet_species_model_marks_invalid_upload_not_ready() -> None:
     status = inspect_uploaded_unet_species_model(b"not a checkpoint", "broken.pt")
+
+    assert not status.ready
+    assert "invalid" in status.message.lower()
+
+
+def test_inspect_uploaded_yolo_count_model_marks_valid_upload_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_validator(*, model_pt_bytes=None, model_pt_path=""):
+        return object()
+
+    monkeypatch.setattr("src.ui.inference.load_yolo_model_for_validation", fake_validator)
+
+    status = inspect_uploaded_yolo_count_model(b"checkpoint", "best.pt")
+
+    assert status.ready
+    assert status.path == "best.pt"
+
+
+def test_inspect_uploaded_yolo_species_model_marks_invalid_upload_not_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_validator(*, model_pt_bytes=None, model_pt_path=""):
+        raise ValueError("bad checkpoint")
+
+    monkeypatch.setattr("src.ui.inference.load_yolo_model_for_validation", fake_validator)
+
+    status = inspect_uploaded_yolo_species_model(b"broken", "broken.pt")
 
     assert not status.ready
     assert "invalid" in status.message.lower()
@@ -439,6 +532,61 @@ def test_classify_with_unet_species_model_accepts_uploaded_checkpoint_bytes() ->
     assert result.classifier_type == "unet_encoder_classifier"
     assert result.score_name == "Confidence"
     assert 0.5 < result.score_value < 1.0
+
+
+def test_count_with_yolo_model_uses_detection_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.ui.inference import YOLODetection
+
+    def fake_run_yolo_detections(**kwargs):
+        assert kwargs["confidence_threshold"] == 0.45
+        assert kwargs["image_size"] == 1536
+        return (
+            YOLODetection(0, "colony", 0.91, 10.0, 12.0, 42.0, 44.0, 1024.0),
+            YOLODetection(0, "colony", 0.83, 60.0, 52.0, 90.0, 86.0, 1020.0),
+        )
+
+    monkeypatch.setattr("src.ui.inference.run_yolo_detections", fake_run_yolo_detections)
+    image = np.full((96, 112, 3), 180, dtype=np.uint8)
+
+    result = count_with_yolo_model(image, model_pt_path="/tmp/model.pt", confidence_threshold=0.45, image_size=1536)
+
+    assert result.predicted_count == 2
+    assert result.overlay_bgr.shape == image.shape
+    assert result.config["confidence_threshold"] == 0.45
+
+
+def test_classify_with_yolo_species_model_aggregates_class_counts(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.ui.inference import YOLODetection
+
+    def fake_run_yolo_detections(**kwargs):
+        return (
+            YOLODetection(1, "E.coli", 0.88, 10.0, 10.0, 24.0, 26.0, 224.0),
+            YOLODetection(2, "S.aureus", 0.81, 30.0, 20.0, 44.0, 36.0, 224.0),
+            YOLODetection(1, "E.coli", 0.79, 50.0, 30.0, 68.0, 48.0, 324.0),
+        )
+
+    monkeypatch.setattr("src.ui.inference.run_yolo_detections", fake_run_yolo_detections)
+    image = np.full((96, 112, 3), 180, dtype=np.uint8)
+
+    result = classify_with_yolo_species_model(image, model_pt_path="/tmp/model.pt")
+
+    assert result.total_detections == 3
+    assert result.class_counts == {"E.coli": 2, "S.aureus": 1}
+    assert result.overlay_bgr.shape == image.shape
+
+
+def test_detection_rows_are_displayable() -> None:
+    from src.ui.inference import YOLODetection
+
+    rows = detection_rows(
+        (
+            YOLODetection(0, "colony", 0.91, 1.0, 2.0, 10.0, 12.0, 90.0),
+            YOLODetection(1, "E.coli", 0.82, 3.0, 4.0, 15.0, 18.0, 168.0),
+        )
+    )
+
+    assert rows[0]["Class"] == "colony"
+    assert rows[1]["Confidence"] == "0.820"
 
 
 def test_find_local_species_model_candidates_filters_model_paths(tmp_path: Path) -> None:
